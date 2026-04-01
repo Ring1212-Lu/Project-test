@@ -4,25 +4,30 @@
 幣圈監控 v2 — 自我學習增強版
 =============================
 核心改進：
-1. Wilder 平滑 RSI（O(n) 效率）
-2. ATR 自適應止盈止損（取代固定百分比）
-3. 布林帶波動率通道
-4. MACD 安全索引存取（修復越界 Bug）
-5. RSI 極端值過濾邏輯修正
-6. 成交量加權信號評分
-7. 自我學習模組：記錄預測 → 驗證結果 → 動態調整策略權重
-8. 多維度綜合評分排序（勝率 × 信心 × 學習權重）
+1.  Wilder 平滑 RSI（O(n) 效率）
+2.  ATR 自適應止盈止損（取代固定百分比）
+3.  布林帶波動率通道 + 價格位置判斷
+4.  MACD 安全索引存取（修復越界 Bug）
+5.  RSI 極端值過濾邏輯修正（不再矛盾過濾）
+6.  成交量加權信號評分
+7.  市場狀態偵測（trending/ranging/volatile）影響策略選擇
+8.  自我學習模組：記錄預測 → 驗證結果 → 動態調整策略權重
+9.  多維度綜合評分（勝率 × 信心 × 學習權重 × 市場適配）
+10. 近期表現加權（指數衰減，近期結果更重要）
+11. OBV 量能確認（防止量價背離假信號）
+12. 連續虧損保護（自動降低曝險）
 """
 
 import requests
 import time
 import json
 import os
+import math
 from datetime import datetime
 from statistics import mean, stdev
 
 # ===== 自我學習模組 =====
-from learning_engine import LearningEngine
+from learning_engine import LearningEngine, MarketRegime
 
 try:
     import colorama
@@ -44,11 +49,14 @@ MIN_SIG    = 3         # 最低訊號次數門檻
 TOP15_PCT  = 0.15      # 每側（漲/跌）取百分比
 TOP15_MAX  = 15        # 每側最多取幾個
 
-# ATR 倍數（取代固定百分比）
+# ATR 倍數（自適應止盈止損）
 ATR_TP_MULT = {"做空": 2.0, "抄底": 2.5, "追多": 3.0}
 ATR_SL_MULT = {"做空": 1.2, "抄底": 1.5, "追多": 1.5}
 
 LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_data.json")
+
+# 連續虧損保護
+MAX_CONSECUTIVE_LOSSES = 3  # 連續虧損超過此數，降低信心分數
 
 
 # ============================================================
@@ -61,7 +69,6 @@ def calc_rsi_wilder(closes, period=14):
         return []
     deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
 
-    # 初始平均
     gains = [max(d, 0) for d in deltas[:period]]
     losses = [max(-d, 0) for d in deltas[:period]]
     avg_gain = sum(gains) / period
@@ -80,24 +87,59 @@ def calc_rsi_wilder(closes, period=14):
     return rsi
 
 
-def calc_mfi(klines, period=14):
-    """資金流量指標"""
+def calc_mfi_optimized(klines, period=14):
+    """資金流量指標（滑動窗口優化版）"""
+    if len(klines) < period + 2:
+        return []
+
+    # 預計算所有 typical price 和 money flow
+    tps = []
+    vols = []
+    for i in range(len(klines)):
+        try:
+            tp = (float(klines[i]['high']) + float(klines[i]['low']) + float(klines[i]['close'])) / 3
+            vol = float(klines[i]['volume'])
+        except (KeyError, ValueError):
+            tp = 0
+            vol = 0
+        tps.append(tp)
+        vols.append(vol)
+
+    # 初始窗口
+    pos = neg = 0
+    for j in range(1, period + 1):
+        mf = tps[j] * vols[j]
+        if tps[j] > tps[j - 1]:
+            pos += mf
+        else:
+            neg += mf
+
     mfi = []
+    mfi.append(100.0 if neg == 0 else 100.0 - 100.0 / (1.0 + pos / (neg + 1e-9)))
+
+    # 滑動窗口
     for i in range(period + 1, len(klines)):
-        pos = neg = 0
-        for j in range(i - period, i):
-            try:
-                c, p = klines[j], klines[j - 1]
-                tp0 = (float(c['high']) + float(c['low']) + float(c['close'])) / 3
-                tp1 = (float(p['high']) + float(p['low']) + float(p['close'])) / 3
-                mf = tp0 * float(c['volume'])
-                if tp0 > tp1:
-                    pos += mf
-                else:
-                    neg += mf
-            except (KeyError, ValueError, ZeroDivisionError):
-                pass
+        # 移除最舊
+        old_j = i - period
+        old_mf = tps[old_j] * vols[old_j]
+        if old_j > 0 and tps[old_j] > tps[old_j - 1]:
+            pos -= old_mf
+        else:
+            neg -= old_mf
+
+        # 加入最新
+        new_mf = tps[i] * vols[i]
+        if tps[i] > tps[i - 1]:
+            pos += new_mf
+        else:
+            neg += new_mf
+
+        # 防止浮點誤差導致負值
+        pos = max(pos, 0)
+        neg = max(neg, 0)
+
         mfi.append(100.0 if neg == 0 else 100.0 - 100.0 / (1.0 + pos / (neg + 1e-9)))
+
     return mfi
 
 
@@ -124,7 +166,7 @@ def calc_macd_hist(closes):
 
 
 def calc_atr(klines, period=14):
-    """Average True Range — 用於自適應止盈止損"""
+    """Average True Range"""
     if len(klines) < period + 1:
         return []
     trs = []
@@ -138,7 +180,6 @@ def calc_atr(klines, period=14):
         except (KeyError, ValueError):
             trs.append(0)
 
-    # Wilder 平滑
     atr = [mean(trs[:period])]
     for i in range(period, len(trs)):
         atr.append((atr[-1] * (period - 1) + trs[i]) / period)
@@ -158,6 +199,34 @@ def calc_bollinger(closes, period=20, num_std=2):
         upper.append(m + num_std * s)
         lower.append(m - num_std * s)
     return mid, upper, lower
+
+
+def calc_obv(closes, volumes):
+    """On-Balance Volume — 量能方向確認"""
+    if len(closes) < 2 or len(volumes) < 2:
+        return []
+    obv = [0]
+    for i in range(1, min(len(closes), len(volumes))):
+        if closes[i] > closes[i - 1]:
+            obv.append(obv[-1] + volumes[i])
+        elif closes[i] < closes[i - 1]:
+            obv.append(obv[-1] - volumes[i])
+        else:
+            obv.append(obv[-1])
+    return obv
+
+
+def obv_trend(obv_vals, lookback=10):
+    """判斷 OBV 趨勢方向：1=上升, -1=下降, 0=持平"""
+    if len(obv_vals) < lookback:
+        return 0
+    recent = obv_vals[-lookback:]
+    slope = recent[-1] - recent[0]
+    if slope > 0:
+        return 1
+    elif slope < 0:
+        return -1
+    return 0
 
 
 # ============================================================
@@ -187,7 +256,7 @@ def fetch_klines(symbol):
 
 
 # ============================================================
-#  核心分析（修復版 + 增強版）
+#  核心分析
 # ============================================================
 
 def analyze(symbol, klines, change24h, learner):
@@ -195,21 +264,33 @@ def analyze(symbol, klines, change24h, learner):
     if len(closes) < 60:
         return None
 
+    volumes = []
+    for k in klines:
+        try:
+            volumes.append(float(k.get('volume', 0)))
+        except (ValueError, TypeError):
+            volumes.append(0)
+
     # 計算所有指標
     rsi_vals   = calc_rsi_wilder(closes)
-    mfi_vals   = calc_mfi(klines)
+    mfi_vals   = calc_mfi_optimized(klines)
     macd_hist  = calc_macd_hist(closes)
     atr_vals   = calc_atr(klines)
     bb_mid, bb_upper, bb_lower = calc_bollinger(closes)
+    obv_vals   = calc_obv(closes, volumes[:len(closes)])
 
     if not rsi_vals or not mfi_vals or not macd_hist:
         return None
 
-    # 對齊長度：RSI 從 index=period 開始，對應 closes[period+1]
-    # RSI offset: calc_rsi_wilder 回傳長度 = len(closes) - period - 1
-    # rsi_vals[0] 對應 closes[period+1] => closes_idx = rsi_idx + period + 1
+    # 市場狀態偵測
+    regime = MarketRegime.detect(closes)
+
+    # OBV 趨勢
+    obv_dir = obv_trend(obv_vals)
+
+    # 對齊索引
     RSI_PERIOD = 14
-    RSI_OFF = RSI_PERIOD + 1  # rsi_vals[i] 對應 closes[i + RSI_OFF]
+    RSI_OFF = RSI_PERIOD + 1
 
     length = min(len(rsi_vals), len(mfi_vals))
 
@@ -224,7 +305,7 @@ def analyze(symbol, klines, change24h, learner):
         ci = i + RSI_OFF
         if ci + 5 >= len(closes) or ci < 2:
             continue
-        # 安全存取 MACD
+        # MACD 安全索引
         if ci >= len(macd_hist) or ci - 1 < 0:
             continue
 
@@ -232,21 +313,18 @@ def analyze(symbol, klines, change24h, learner):
         next_price = closes[ci + 5]
         rsi_prev   = rsi_vals[i - 1] if i - 1 >= 0 else 50
         rsi_cur    = rsi_vals[i]
-        mfi_cur    = mfi_vals[i]
+        mfi_cur    = mfi_vals[i] if i < len(mfi_vals) else 50
 
-        # MACD 方向
         macd_down = macd_hist[ci] < macd_hist[ci - 1]
         macd_up   = macd_hist[ci] > macd_hist[ci - 1]
 
-        # 成交量（用於加權）
         try:
-            vol = float(klines[ci]['volume'])
-        except (KeyError, ValueError, IndexError):
+            vol = volumes[ci] if ci < len(volumes) else 1.0
+        except IndexError:
             vol = 1.0
 
-        # ---- 做空條件（修正版）----
-        # 修正：移除 not_extreme 過濾，因為 RSI > 70 本身就是超買信號
-        # 改為：RSI 從超買回落 + MACD 動能向下 + 非超賣區（RSI > 30）
+        # ---- 做空條件 ----
+        # RSI 從超買回落 + MACD 動能向下 + 非超賣區
         if rsi_prev > 70 and rsi_cur < rsi_prev and macd_down and rsi_cur > 30:
             stats["做空"]["total"] += 1
             stats["做空"]["vol_sum"] += vol
@@ -262,7 +340,7 @@ def analyze(symbol, klines, change24h, learner):
                 stats["抄底"]["win"] += 1
 
         # ---- 追多條件 ----
-        # 連續上漲 + RSI 強勢 + MACD 動能向上
+        # 連續上漲 + RSI 強勢區 + MACD 動能向上
         if (closes[ci] > closes[ci - 1] > closes[ci - 2]
                 and 60 < rsi_cur < 85 and macd_up):
             stats["追多"]["total"] += 1
@@ -270,23 +348,49 @@ def analyze(symbol, klines, change24h, learner):
             if next_price > price:
                 stats["追多"]["win"] += 1
 
-    # 計算勝率
+    # 計算勝率與綜合分數
     def rate(w, t):
         return round(w / t * 100, 1) if t > 0 else 0.0
 
     strat_results = {}
     for strat, s in stats.items():
         r = rate(s["win"], s["total"])
-        # 取得學習權重
         weight = learner.get_weight(symbol, strat)
-        # 綜合分數 = 勝率 × 信心係數 × 學習權重
-        # 信心係數：樣本越多越高，用 min(total/10, 1.5) 限制上界
+        regime_bonus = learner.get_regime_bonus(regime, strat)
+
+        # 信心係數：樣本越多越高
         confidence = min(s["total"] / 10.0, 1.5) if s["total"] >= MIN_SIG else 0
-        score = r * confidence * weight
+
+        # OBV 確認加成
+        obv_bonus = 1.0
+        if strat in ("抄底", "追多") and obv_dir == 1:
+            obv_bonus = 1.1  # 量能支持做多
+        elif strat == "做空" and obv_dir == -1:
+            obv_bonus = 1.1  # 量能支持做空
+        elif strat in ("抄底", "追多") and obv_dir == -1:
+            obv_bonus = 0.85  # 量價背離，降低信心
+        elif strat == "做空" and obv_dir == 1:
+            obv_bonus = 0.85
+
+        # 近期表現加權
+        recent_acc, recent_n = learner.get_recent_accuracy(symbol, strat)
+        recent_bonus = 1.0
+        if recent_acc is not None and recent_n >= 3:
+            if recent_acc > 60:
+                recent_bonus = 1.15
+            elif recent_acc < 40:
+                recent_bonus = 0.80
+
+        # 綜合分數
+        score = r * confidence * weight * regime_bonus * obv_bonus * recent_bonus
+
         strat_results[strat] = {
             "rate": r, "total": s["total"], "win": s["win"],
             "confidence": round(confidence, 2),
             "weight": round(weight, 2),
+            "regime_bonus": round(regime_bonus, 2),
+            "obv_bonus": round(obv_bonus, 2),
+            "recent_bonus": round(recent_bonus, 2),
             "score": round(score, 1),
         }
 
@@ -295,7 +399,6 @@ def analyze(symbol, klines, change24h, learner):
     if not valid:
         return None
 
-    # 選擇最佳策略（依綜合分數）
     best_strat = max(valid, key=lambda k: valid[k]["score"])
     best = valid[best_strat]
 
@@ -320,48 +423,63 @@ def analyze(symbol, klines, change24h, learner):
     rr = round(tp_dist / sl_dist, 2) if sl_dist > 0 else 0
 
     # 布林帶位置
-    bb_pos = "中軌"
-    if bb_upper and bb_lower:
+    bb_pos = "N/A"
+    if bb_upper and bb_lower and bb_mid:
         if current_price >= bb_upper[-1]:
-            bb_pos = "上軌上方"
+            bb_pos = "upper+"
         elif current_price <= bb_lower[-1]:
-            bb_pos = "下軌下方"
-        elif bb_mid and current_price > bb_mid[-1]:
-            bb_pos = "中軌上方"
+            bb_pos = "lower-"
+        elif current_price > bb_mid[-1]:
+            bb_pos = "mid+"
         else:
-            bb_pos = "中軌下方"
+            bb_pos = "mid-"
 
-    # 策略明細字串
+    # 策略明細
     detail_parts = []
     for st in ["做空", "抄底", "追多"]:
         sr = strat_results[st]
         detail_parts.append(f"{st}{sr['rate']}%({sr['total']})")
     detail = " | ".join(detail_parts)
 
+    # 信號強度等級
+    score_val = best["score"]
+    if score_val >= 120:
+        signal_strength = "STRONG"
+    elif score_val >= 80:
+        signal_strength = "MEDIUM"
+    else:
+        signal_strength = "WEAK"
+
     return {
-        "symbol":       symbol,
-        "change24h":    change24h,
-        "price":        current_price,
-        "rsi":          round(current_rsi, 1),
-        "mfi":          round(current_mfi, 1),
-        "bb_pos":       bb_pos,
-        "atr":          round(current_atr, 6),
+        "symbol":         symbol,
+        "change24h":      change24h,
+        "price":          current_price,
+        "rsi":            round(current_rsi, 1),
+        "mfi":            round(current_mfi, 1),
+        "bb_pos":         bb_pos,
+        "atr":            round(current_atr, 6),
+        "regime":         regime,
+        "obv_dir":        obv_dir,
         # 最佳策略
-        "best_strat":   best_strat,
-        "best_rate":    best["rate"],
-        "best_total":   best["total"],
-        "best_score":   best["score"],
-        "confidence":   best["confidence"],
-        "weight":       best["weight"],
-        "detail":       detail,
+        "best_strat":     best_strat,
+        "best_rate":      best["rate"],
+        "best_total":     best["total"],
+        "best_score":     best["score"],
+        "confidence":     best["confidence"],
+        "weight":         best["weight"],
+        "regime_bonus":   best["regime_bonus"],
+        "obv_bonus":      best["obv_bonus"],
+        "recent_bonus":   best["recent_bonus"],
+        "signal_strength": signal_strength,
+        "detail":         detail,
         # 進出場
-        "tp":           tp_price,
-        "sl":           sl_price,
-        "rr":           rr,
-        "tp_pct":       tp_pct,
-        "sl_pct":       sl_pct,
-        # 所有策略結果（供學習引擎使用）
-        "all_strats":   strat_results,
+        "tp":             tp_price,
+        "sl":             sl_price,
+        "rr":             rr,
+        "tp_pct":         tp_pct,
+        "sl_pct":         sl_pct,
+        # 所有策略結果
+        "all_strats":     strat_results,
     }
 
 
@@ -369,10 +487,10 @@ def analyze(symbol, klines, change24h, learner):
 #  主流程
 # ============================================================
 
-def run_scan(learner):
+def run_scan(learner, round_num):
     print(color("=" * 62, 'cyan'))
     print(color(" 幣圈監控 v2 — 自我學習增強版", 'cyan'))
-    print(f"   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  第 {round_num} 輪")
     print(f"   學習資料：{learner.total_predictions} 筆預測 / "
           f"{learner.total_validations} 筆驗證")
     print(color("=" * 62, 'cyan'))
@@ -381,6 +499,10 @@ def run_scan(learner):
     validated = learner.validate_pending_predictions()
     if validated > 0:
         print(color(f"\n[LEARN] 本輪驗證了 {validated} 筆歷史預測，權重已更新", 'yellow'))
+
+    # 定期清理過期權重（每 50 輪一次）
+    if round_num % 50 == 0:
+        learner.cleanup_stale_weights()
 
     # Step 1：抓全市場行情
     print("\n[INFO] 正在抓取全市場行情...")
@@ -412,7 +534,7 @@ def run_scan(learner):
     losers  = list(reversed(perps[-n15:]))[:TOP15_MAX]
     pool    = gainers + losers
 
-    # 去重（避免漲跌幅都在前15%的極端情況）
+    # 去重
     seen = set()
     unique_pool = []
     for coin in pool:
@@ -442,6 +564,7 @@ def run_scan(learner):
         if res:
             results.append(res)
             print(f"{res['best_strat']} {res['best_rate']}% "
+                  f"[{res['signal_strength']}] "
                   f"(score:{res['best_score']}, w:{res['weight']})")
         else:
             print("跳過（訊號不足）")
@@ -455,7 +578,7 @@ def run_scan(learner):
     results.sort(key=lambda x: x["best_score"], reverse=True)
     top = results[:TOP_N]
 
-    # Step 4：記錄預測（供下輪驗證）
+    # Step 4：記錄預測
     for r in top:
         learner.record_prediction(
             symbol=r["symbol"],
@@ -465,6 +588,7 @@ def run_scan(learner):
             sl_price=r["sl"],
             rate=r["best_rate"],
             score=r["best_score"],
+            regime=r["regime"],
         )
 
     # Step 5：輸出結果
@@ -475,13 +599,20 @@ def run_scan(learner):
     medals = ["[1st]", "[2nd]", "[3rd]"]
     for rank, r in enumerate(top):
         chg = f"+{r['change24h']:.2f}%" if r['change24h'] > 0 else f"{r['change24h']:.2f}%"
+        obv_str = {1: "Up", -1: "Down", 0: "Flat"}.get(r['obv_dir'], "?")
+        strength_color = {'STRONG': 'green', 'MEDIUM': 'yellow', 'WEAK': 'red'}
 
         print(f"\n{medals[rank]} {color(r['symbol'], 'cyan')}  24h: {chg}")
-        print(f"   Price: {r['price']}  |  RSI: {r['rsi']}  |  MFI: {r['mfi']}  |  BB: {r['bb_pos']}")
-        print(f"   ATR: {r['atr']}")
+        print(f"   Price: {r['price']}  |  RSI: {r['rsi']}  |  MFI: {r['mfi']}")
+        print(f"   BB: {r['bb_pos']}  |  ATR: {r['atr']}  |  OBV: {obv_str}")
+        print(f"   Regime: {r['regime']}")
         print(f"   策略：{r['best_strat']} {color(str(r['best_rate']) + '%', 'green')}"
-              f"（{r['best_total']}次）  Score: {r['best_score']}")
-        print(f"   信心: {r['confidence']}  學習權重: {r['weight']}")
+              f"（{r['best_total']}次）")
+        print(f"   Signal: {color(r['signal_strength'], strength_color.get(r['signal_strength'], 'white'))}"
+              f"  Score: {r['best_score']}")
+        print(f"   Weights: learn={r['weight']} regime={r['regime_bonus']} "
+              f"obv={r['obv_bonus']} recent={r['recent_bonus']} "
+              f"conf={r['confidence']}")
         print(f"   明細：{r['detail']}")
         print(f"   進場: {r['price']}  "
               f"止盈: {r['tp']} (+{r['tp_pct']}%)  "
@@ -489,8 +620,15 @@ def run_scan(learner):
               f"風報比: 1:{r['rr']}")
         print(f"   " + "-" * 56)
 
-    # Step 6：印出學習統計
+    # Step 6：學習統計
     learner.print_summary()
+
+    # 顯示歷史最佳組合
+    top_perf = learner.get_top_performers(3)
+    if top_perf:
+        print(f"\n[LEARN] 歷史最佳組合：")
+        for sym_strat, acc, cnt in top_perf:
+            print(f"  {sym_strat}: {acc}% ({cnt}次)")
 
     print(color("\n" + "=" * 62, 'cyan'))
     print(color(f" 掃描完成  |  下次更新：{INTERVAL} 秒後", 'cyan'))
@@ -508,7 +646,7 @@ def main():
             round_num += 1
             print(f"\n{'=' * 62}")
             print(f" 第 {round_num} 輪掃描")
-            run_scan(learner)
+            run_scan(learner, round_num)
             print(f"\n 等待 {INTERVAL} 秒後進行下一輪...")
             time.sleep(INTERVAL)
     except KeyboardInterrupt:

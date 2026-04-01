@@ -1,51 +1,103 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-自我學習引擎 (Learning Engine)
-==============================
-功能：
-1. 記錄每次預測（幣種、策略、進場價、止盈止損、時間戳）
-2. 下一輪掃描時驗證歷史預測的結果（是否觸及止盈/止損）
-3. 根據驗證結果動態調整策略權重（貝葉斯更新）
-4. 持久化學習資料到 JSON 檔案
-5. 提供策略表現統計
-
-學習邏輯：
-- 每個 (symbol, strategy) 組合維護一個權重值（初始 1.0）
-- 預測正確 → 權重 × 1.05（最高 2.0）
-- 預測錯誤 → 權重 × 0.90（最低 0.3）
-- 權重影響綜合評分，使系統逐漸偏向歷史表現好的策略
+自我學習引擎 v2 (Learning Engine)
+==================================
+改進：
+1. 貝葉斯權重更新 + 時間衰減（長期未交易的幣種權重自動回歸均值）
+2. 市場狀態偵測（trending / ranging / volatile）影響策略選擇
+3. 多周期驗證（不再僅依 5 分鐘判定，改用觸及止盈止損 + 週期加權）
+4. 策略表現衰減：近期結果影響力 > 遠期（指數衰減）
+5. 最佳組合追蹤：記錄歷史最佳 (symbol, strategy) 組合
+6. 防止檔案無限膨脹：自動裁剪 + 壓縮舊資料
 """
 
 import json
 import os
 import time
+import math
 from datetime import datetime
+from collections import defaultdict
+
+
+class MarketRegime:
+    """市場狀態偵測器"""
+    TRENDING_UP = "trending_up"
+    TRENDING_DOWN = "trending_down"
+    RANGING = "ranging"
+    VOLATILE = "volatile"
+
+    @staticmethod
+    def detect(closes, period=50):
+        """根據價格序列判斷市場狀態"""
+        if len(closes) < period:
+            return MarketRegime.RANGING
+
+        recent = closes[-period:]
+        # 計算趨勢斜率（線性回歸簡化版）
+        n = len(recent)
+        x_mean = (n - 1) / 2
+        y_mean = sum(recent) / n
+        numerator = sum((i - x_mean) * (recent[i] - y_mean) for i in range(n))
+        denominator = sum((i - x_mean) ** 2 for i in range(n))
+        slope = numerator / denominator if denominator != 0 else 0
+        # 正規化斜率
+        norm_slope = slope / y_mean if y_mean != 0 else 0
+
+        # 計算波動率（標準差/均值）
+        std = (sum((p - y_mean) ** 2 for p in recent) / n) ** 0.5
+        volatility = std / y_mean if y_mean != 0 else 0
+
+        # 判斷
+        if volatility > 0.05:  # 高波動
+            return MarketRegime.VOLATILE
+        elif norm_slope > 0.001:
+            return MarketRegime.TRENDING_UP
+        elif norm_slope < -0.001:
+            return MarketRegime.TRENDING_DOWN
+        else:
+            return MarketRegime.RANGING
 
 
 class LearningEngine:
-    """自我學習引擎：追蹤預測 → 驗證結果 → 調整權重"""
+    """自我學習引擎 v2：追蹤預測 → 驗證結果 → 動態調整權重"""
 
     # 權重更新參數
-    WIN_MULTIPLIER  = 1.05   # 預測正確時的權重提升
-    LOSE_MULTIPLIER = 0.90   # 預測錯誤時的權重衰減
-    MAX_WEIGHT      = 2.0    # 權重上限
-    MIN_WEIGHT      = 0.3    # 權重下限
+    WIN_MULTIPLIER  = 1.08   # 預測正確時的權重提升（加大獎勵）
+    LOSE_MULTIPLIER = 0.88   # 預測錯誤時的權重衰減（加大懲罰）
+    MAX_WEIGHT      = 2.5    # 權重上限
+    MIN_WEIGHT      = 0.2    # 權重下限
     DEFAULT_WEIGHT  = 1.0    # 初始權重
 
-    # 預測過期時間（秒）— 超過此時間的預測直接丟棄
-    PREDICTION_TTL  = 3600 * 6  # 6 小時
+    # 時間衰減參數
+    WEIGHT_DECAY_RATE  = 0.001   # 每小時權重向均值回歸的速率
+    WEIGHT_DECAY_HOURS = 24      # 超過此時間未更新開始衰減
 
-    # 最多保留多少筆歷史記錄（防止檔案無限增長）
-    MAX_HISTORY     = 5000
+    # 預測過期時間（秒）
+    PREDICTION_TTL = 3600 * 4   # 4 小時（縮短，提高反饋速度）
+
+    # 驗證等待時間（秒）
+    MIN_VALIDATION_AGE = 180    # 至少等 3 分鐘
+
+    # 歷史記錄上限
+    MAX_HISTORY = 5000
+    MAX_PENDING = 500
+
+    # 市場狀態對策略的適配分數
+    REGIME_BONUS = {
+        MarketRegime.TRENDING_UP:   {"做空": 0.7, "抄底": 0.9, "追多": 1.3},
+        MarketRegime.TRENDING_DOWN: {"做空": 1.3, "抄底": 1.1, "追多": 0.6},
+        MarketRegime.RANGING:       {"做空": 1.0, "抄底": 1.2, "追多": 0.8},
+        MarketRegime.VOLATILE:      {"做空": 0.9, "抄底": 0.8, "追多": 0.7},
+    }
 
     def __init__(self, filepath):
         self.filepath = filepath
         self.data = {
-            "weights": {},          # {"SYMBOL:STRATEGY": weight}
+            "weights": {},          # {"SYMBOL:STRATEGY": {"value": float, "updated": timestamp}}
             "pending": [],          # 待驗證的預測
             "history": [],          # 已驗證的歷史記錄
-            "stats": {              # 全域統計
+            "stats": {
                 "total_predictions": 0,
                 "total_validations": 0,
                 "total_wins": 0,
@@ -56,6 +108,7 @@ class LearningEngine:
                     "抄底": {"wins": 0, "losses": 0, "expired": 0},
                     "追多": {"wins": 0, "losses": 0, "expired": 0},
                 },
+                "regime_stats": {},  # {regime: {strategy: {wins, losses}}}
             },
         }
         self._load()
@@ -71,21 +124,32 @@ class LearningEngine:
                 for key in self.data:
                     if key in loaded:
                         self.data[key] = loaded[key]
-                # 確保 strategy_stats 結構完整
+                # 遷移舊格式權重（純數字 → 物件）
+                for k, v in list(self.data["weights"].items()):
+                    if isinstance(v, (int, float)):
+                        self.data["weights"][k] = {
+                            "value": v, "updated": time.time()
+                        }
+                # 確保結構完整
                 for strat in ["做空", "抄底", "追多"]:
                     if strat not in self.data["stats"]["strategy_stats"]:
                         self.data["stats"]["strategy_stats"][strat] = {
                             "wins": 0, "losses": 0, "expired": 0
                         }
+                if "regime_stats" not in self.data["stats"]:
+                    self.data["stats"]["regime_stats"] = {}
                 print(f"[LEARN] 載入學習資料：{len(self.data['pending'])} 筆待驗證，"
-                      f"{len(self.data['history'])} 筆歷史")
-            except (json.JSONDecodeError, KeyError) as e:
+                      f"{len(self.data['history'])} 筆歷史，"
+                      f"{len(self.data['weights'])} 組權重")
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
                 print(f"[LEARN] 學習檔案損壞，重新初始化: {e}")
 
     def save(self):
-        # 裁剪歷史記錄
+        # 裁剪
         if len(self.data["history"]) > self.MAX_HISTORY:
             self.data["history"] = self.data["history"][-self.MAX_HISTORY:]
+        if len(self.data["pending"]) > self.MAX_PENDING:
+            self.data["pending"] = self.data["pending"][-self.MAX_PENDING:]
         try:
             with open(self.filepath, 'w', encoding='utf-8') as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
@@ -98,26 +162,50 @@ class LearningEngine:
         return f"{symbol}:{strategy}"
 
     def get_weight(self, symbol, strategy):
-        """取得某 (symbol, strategy) 的學習權重"""
+        """取得某 (symbol, strategy) 的學習權重（含時間衰減）"""
         key = self._weight_key(symbol, strategy)
-        return self.data["weights"].get(key, self.DEFAULT_WEIGHT)
+        entry = self.data["weights"].get(key)
+        if entry is None:
+            return self.DEFAULT_WEIGHT
+
+        value = entry["value"]
+        last_updated = entry.get("updated", time.time())
+        hours_since = (time.time() - last_updated) / 3600
+
+        # 時間衰減：權重向 DEFAULT_WEIGHT 回歸
+        if hours_since > self.WEIGHT_DECAY_HOURS:
+            decay_hours = hours_since - self.WEIGHT_DECAY_HOURS
+            decay_factor = math.exp(-self.WEIGHT_DECAY_RATE * decay_hours)
+            value = self.DEFAULT_WEIGHT + (value - self.DEFAULT_WEIGHT) * decay_factor
+
+        return round(value, 4)
+
+    def get_regime_bonus(self, regime, strategy):
+        """取得市場狀態對策略的加成"""
+        return self.REGIME_BONUS.get(regime, {}).get(strategy, 1.0)
 
     def _update_weight(self, symbol, strategy, win):
-        """更新權重（貝葉斯式漸進調整）"""
+        """更新權重"""
         key = self._weight_key(symbol, strategy)
-        current = self.data["weights"].get(key, self.DEFAULT_WEIGHT)
+        entry = self.data["weights"].get(key, {"value": self.DEFAULT_WEIGHT})
+        current = entry["value"] if isinstance(entry, dict) else entry
+
         if win:
-            new_weight = min(current * self.WIN_MULTIPLIER, self.MAX_WEIGHT)
+            new_value = min(current * self.WIN_MULTIPLIER, self.MAX_WEIGHT)
         else:
-            new_weight = max(current * self.LOSE_MULTIPLIER, self.MIN_WEIGHT)
-        self.data["weights"][key] = round(new_weight, 4)
-        return self.data["weights"][key]
+            new_value = max(current * self.LOSE_MULTIPLIER, self.MIN_WEIGHT)
+
+        self.data["weights"][key] = {
+            "value": round(new_value, 4),
+            "updated": time.time(),
+        }
+        return self.data["weights"][key]["value"]
 
     # ---- 預測記錄 ----
 
     def record_prediction(self, symbol, strategy, entry_price, tp_price, sl_price,
-                          rate, score):
-        """記錄一筆預測，等待下輪驗證"""
+                          rate, score, regime="unknown"):
+        """記錄一筆預測"""
         prediction = {
             "symbol":      symbol,
             "strategy":    strategy,
@@ -126,6 +214,7 @@ class LearningEngine:
             "sl_price":    sl_price,
             "rate":        rate,
             "score":       score,
+            "regime":      regime,
             "timestamp":   time.time(),
             "time_str":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -136,11 +225,7 @@ class LearningEngine:
     # ---- 預測驗證 ----
 
     def validate_pending_predictions(self):
-        """
-        驗證所有待驗證的預測。
-        使用當前市場價格判斷是否觸及止盈/止損。
-        回傳：本次驗證的筆數
-        """
+        """驗證所有待驗證的預測，回傳本次驗證筆數"""
         if not self.data["pending"]:
             return 0
 
@@ -148,7 +233,6 @@ class LearningEngine:
         validated_count = 0
         remaining = []
 
-        # 批量取得行情
         current_prices = self._fetch_current_prices()
 
         for pred in self.data["pending"]:
@@ -156,14 +240,14 @@ class LearningEngine:
             symbol = pred["symbol"]
             strategy = pred["strategy"]
 
-            # 超過 TTL → 過期丟棄
+            # 超過 TTL → 過期
             if age > self.PREDICTION_TTL:
                 self._record_result(pred, "expired")
                 validated_count += 1
                 continue
 
-            # 至少等一個週期（60秒）才驗證
-            if age < 60:
+            # 未到驗證時間
+            if age < self.MIN_VALIDATION_AGE:
                 remaining.append(pred)
                 continue
 
@@ -172,14 +256,15 @@ class LearningEngine:
                 remaining.append(pred)
                 continue
 
-            # 判斷結果
-            result = self._check_prediction(pred, current_price)
+            result = self._check_prediction(pred, current_price, age)
             if result is not None:
-                self._record_result(pred, "win" if result else "lose")
-                self._update_weight(symbol, strategy, result)
+                is_win = result
+                self._record_result(pred, "win" if is_win else "lose")
+                new_w = self._update_weight(symbol, strategy, is_win)
+                # 記錄 regime 統計
+                self._update_regime_stats(pred.get("regime", "unknown"), strategy, is_win)
                 validated_count += 1
             else:
-                # 尚未觸及止盈/止損，繼續等待
                 remaining.append(pred)
 
         self.data["pending"] = remaining
@@ -189,45 +274,60 @@ class LearningEngine:
 
         return validated_count
 
-    def _check_prediction(self, pred, current_price):
+    def _check_prediction(self, pred, current_price, age):
         """
-        檢查預測是否觸及止盈或止損。
-        回傳 True=勝, False=敗, None=未定
+        多階段驗證：
+        1. 觸及止盈 → 勝
+        2. 觸及止損 → 敗
+        3. 超過 15 分鐘 → 用價格方向 + 幅度加權判定
         """
-        entry  = pred["entry_price"]
-        tp     = pred["tp_price"]
-        sl     = pred["sl_price"]
-        strat  = pred["strategy"]
+        entry = pred["entry_price"]
+        tp    = pred["tp_price"]
+        sl    = pred["sl_price"]
+        strat = pred["strategy"]
 
         if strat == "做空":
-            # 做空：價格跌到止盈=勝，漲到止損=敗
             if current_price <= tp:
                 return True
             if current_price >= sl:
                 return False
         else:
-            # 做多（抄底/追多）：價格漲到止盈=勝，跌到止損=敗
             if current_price >= tp:
                 return True
             if current_price <= sl:
                 return False
 
-        # 未觸及任一邊 → 用盈虧方向作為參考
-        # 如果已經過了2個週期且有明顯方向，提前判定
-        age = time.time() - pred["timestamp"]
-        if age > 300:  # 5分鐘後
+        # 15 分鐘後用方向 + 幅度判定
+        if age > 900:
+            pnl_pct = (current_price - entry) / entry if entry > 0 else 0
             if strat == "做空":
-                return current_price < entry
-            else:
-                return current_price > entry
+                pnl_pct = -pnl_pct  # 做空盈虧反轉
+
+            # 需要至少 0.1% 的明確方向才判定
+            if pnl_pct > 0.001:
+                return True
+            elif pnl_pct < -0.001:
+                return False
 
         return None
 
+    def _update_regime_stats(self, regime, strategy, win):
+        """更新市場狀態統計"""
+        rs = self.data["stats"]["regime_stats"]
+        if regime not in rs:
+            rs[regime] = {}
+        if strategy not in rs[regime]:
+            rs[regime][strategy] = {"wins": 0, "losses": 0}
+        if win:
+            rs[regime][strategy]["wins"] += 1
+        else:
+            rs[regime][strategy]["losses"] += 1
+
     def _record_result(self, pred, result):
-        """記錄驗證結果到歷史"""
+        """記錄驗證結果"""
         record = {
             **pred,
-            "result":      result,
+            "result":       result,
             "validated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         self.data["history"].append(record)
@@ -266,6 +366,37 @@ class LearningEngine:
             pass
         return prices
 
+    # ---- 近期表現加權 ----
+
+    def get_recent_accuracy(self, symbol, strategy, lookback=20):
+        """
+        取得近 N 筆驗證的勝率（指數衰減加權）。
+        近期結果影響力更大。
+        """
+        key = f"{symbol}:{strategy}"
+        relevant = [h for h in self.data["history"]
+                    if h["symbol"] == symbol
+                    and h["strategy"] == strategy
+                    and h["result"] in ("win", "lose")]
+
+        if not relevant:
+            return None, 0
+
+        recent = relevant[-lookback:]
+        total_weight = 0
+        weighted_wins = 0
+        for i, h in enumerate(recent):
+            # 越新的記錄權重越高
+            w = math.exp(0.1 * (i - len(recent)))
+            total_weight += w
+            if h["result"] == "win":
+                weighted_wins += w
+
+        if total_weight == 0:
+            return None, 0
+
+        return round(weighted_wins / total_weight * 100, 1), len(recent)
+
     # ---- 統計輸出 ----
 
     @property
@@ -284,8 +415,8 @@ class LearningEngine:
             print("\n[LEARN] 尚無驗證資料，持續累積中...")
             return
 
-        wins   = stats["total_wins"]
-        losses = stats["total_losses"]
+        wins    = stats["total_wins"]
+        losses  = stats["total_losses"]
         expired = stats["total_expired"]
         decided = wins + losses
         overall_rate = round(wins / decided * 100, 1) if decided > 0 else 0
@@ -300,17 +431,32 @@ class LearningEngine:
         ss = stats["strategy_stats"]
         for strat in ["做空", "抄底", "追多"]:
             s = ss.get(strat, {"wins": 0, "losses": 0, "expired": 0})
-            sw, sl = s["wins"], s["losses"]
-            st = sw + sl
+            sw, sl_count = s["wins"], s["losses"]
+            st = sw + sl_count
             sr = round(sw / st * 100, 1) if st > 0 else 0
-            # 找出此策略的平均權重
-            weights = [v for k, v in self.data["weights"].items() if k.endswith(f":{strat}")]
+            # 平均權重
+            weights = []
+            for k, v in self.data["weights"].items():
+                if k.endswith(f":{strat}"):
+                    val = v["value"] if isinstance(v, dict) else v
+                    weights.append(val)
             avg_w = round(sum(weights) / len(weights), 3) if weights else self.DEFAULT_WEIGHT
-            print(f"  {strat}: {sw}勝/{sl}負 ({sr}%)  平均權重: {avg_w}")
+            print(f"  {strat}: {sw}勝/{sl_count}負 ({sr}%)  平均權重: {avg_w}")
+
+        # 市場狀態統計
+        rs = stats.get("regime_stats", {})
+        if rs:
+            print(f"\n  --- 市場狀態分析 ---")
+            for regime, strats in rs.items():
+                parts = []
+                for s, v in strats.items():
+                    total = v["wins"] + v["losses"]
+                    rate = round(v["wins"] / total * 100, 1) if total > 0 else 0
+                    parts.append(f"{s}:{rate}%({total})")
+                print(f"  {regime}: {' | '.join(parts)}")
 
     def get_top_performers(self, n=5):
         """回傳歷史表現最好的 (symbol, strategy) 組合"""
-        from collections import defaultdict
         perf = defaultdict(lambda: {"wins": 0, "total": 0})
         for h in self.data["history"]:
             if h["result"] in ("win", "lose"):
@@ -323,5 +469,21 @@ class LearningEngine:
         for key, v in perf.items():
             if v["total"] >= 3:
                 ranked.append((key, round(v["wins"] / v["total"] * 100, 1), v["total"]))
-        ranked.sort(key=lambda x: x[1], reverse=True)
+        ranked.sort(key=lambda x: (x[1], x[2]), reverse=True)
         return ranked[:n]
+
+    def cleanup_stale_weights(self, max_age_hours=168):
+        """清理超過指定時間未更新的權重（預設 7 天）"""
+        now = time.time()
+        removed = 0
+        for key in list(self.data["weights"].keys()):
+            entry = self.data["weights"][key]
+            if isinstance(entry, dict):
+                age_hours = (now - entry.get("updated", now)) / 3600
+                if age_hours > max_age_hours:
+                    del self.data["weights"][key]
+                    removed += 1
+        if removed > 0:
+            print(f"[LEARN] 清理了 {removed} 組過期權重")
+            self.save()
+        return removed
