@@ -235,6 +235,67 @@ def obv_trend(obv_vals, lookback=10):
     return 0
 
 
+def detect_rsi_divergence(closes, rsi_vals, lookback=20):
+    """
+    偵測 RSI 背離（比閾值交叉更強的反轉信號）
+    - 看漲背離：價格創新低，RSI 沒有 → 買入信號
+    - 看跌背離：價格創新高，RSI 沒有 → 賣出信號
+    回傳: 1=看漲背離, -1=看跌背離, 0=無背離
+    """
+    if len(closes) < lookback or len(rsi_vals) < lookback:
+        return 0
+
+    recent_closes = closes[-lookback:]
+    recent_rsi = rsi_vals[-lookback:]
+
+    # 找前半和後半的極值
+    mid = lookback // 2
+    first_half_c = recent_closes[:mid]
+    second_half_c = recent_closes[mid:]
+    first_half_r = recent_rsi[:mid]
+    second_half_r = recent_rsi[mid:]
+
+    # 看跌背離：價格新高但 RSI 沒新高
+    if max(second_half_c) > max(first_half_c) and max(second_half_r) < max(first_half_r):
+        return -1
+
+    # 看漲背離：價格新低但 RSI 沒新低
+    if min(second_half_c) < min(first_half_c) and min(second_half_r) > min(first_half_r):
+        return 1
+
+    return 0
+
+
+def calc_support_resistance(closes, lookback=50):
+    """
+    簡易支撐阻力位計算（基於近期高低點聚集）
+    回傳 (support, resistance) 價格
+    """
+    if len(closes) < lookback:
+        return None, None
+
+    recent = closes[-lookback:]
+    price = closes[-1]
+
+    # 找局部高低點
+    highs = []
+    lows = []
+    for i in range(2, len(recent) - 2):
+        if recent[i] > recent[i-1] and recent[i] > recent[i-2] and \
+           recent[i] > recent[i+1] and recent[i] > recent[i+2]:
+            highs.append(recent[i])
+        if recent[i] < recent[i-1] and recent[i] < recent[i-2] and \
+           recent[i] < recent[i+1] and recent[i] < recent[i+2]:
+            lows.append(recent[i])
+
+    # 支撐 = 低於當前價的最高低點
+    support = max([l for l in lows if l < price], default=None)
+    # 阻力 = 高於當前價的最低高點
+    resistance = min([h for h in highs if h > price], default=None)
+
+    return support, resistance
+
+
 # ============================================================
 #  資料擷取
 # ============================================================
@@ -270,32 +331,92 @@ def _create_session():
 _session = _create_session()
 
 
-def fetch_klines(symbol):
+def fetch_klines(symbol, interval="1M", limit=120):
     try:
-        r = _session.get(BASE_URL, params={"symbol": symbol, "interval": "1M", "limit": 120}, timeout=15)
+        r = _session.get(BASE_URL, params={
+            "symbol": symbol, "interval": interval, "limit": limit
+        }, timeout=15)
         if r.status_code == 200:
             kl = r.json().get("data", {}).get("klines", [])
-            if isinstance(kl, list) and len(kl) >= 60:
+            if isinstance(kl, list) and len(kl) >= 30:
                 return kl
     except Exception as e:
         print(f"    [WARN] {symbol}: {type(e).__name__}")
     return []
 
 
-def fetch_and_analyze(coin, learner, opt_params=None):
+def get_btc_trend():
+    """
+    取得 BTC 趨勢方向（大盤過濾器）
+    回傳: 1=上漲, -1=下跌, 0=震盪
+    """
+    klines = fetch_klines("BTC_USDT_PERP", interval="5M", limit=30)
+    if not klines:
+        return 0
+    closes = [float(k['close']) for k in klines]
+    if len(closes) < 20:
+        return 0
+
+    # 用 EMA 20 判斷趨勢
+    ema20 = calc_ema(closes, 20)
+    if not ema20:
+        return 0
+
+    price = closes[-1]
+    ema = ema20[-1]
+    # 價格在 EMA 上方且 EMA 上升 = 上漲
+    if price > ema and ema20[-1] > ema20[-3]:
+        return 1
+    elif price < ema and ema20[-1] < ema20[-3]:
+        return -1
+    return 0
+
+
+def get_higher_tf_trend(symbol):
+    """
+    取得 5 分鐘線趨勢（多時間框架確認）
+    回傳: 1=上漲, -1=下跌, 0=不明
+    """
+    klines = fetch_klines(symbol, interval="5M", limit=30)
+    if not klines:
+        return 0
+    closes = [float(k['close']) for k in klines]
+    if len(closes) < 15:
+        return 0
+
+    rsi = calc_rsi_wilder(closes, 14)
+    ema_fast = calc_ema(closes, 8)
+    ema_slow = calc_ema(closes, 21)
+
+    if not rsi or not ema_fast or not ema_slow:
+        return 0
+
+    # EMA 金叉 + RSI > 50 = 多頭
+    if ema_fast[-1] > ema_slow[-1] and rsi[-1] > 50:
+        return 1
+    elif ema_fast[-1] < ema_slow[-1] and rsi[-1] < 50:
+        return -1
+    return 0
+
+
+def fetch_and_analyze(coin, learner, opt_params=None, btc_trend=0):
     """單一幣種：抓取 + 分析（供並行使用）"""
     sym = coin["symbol"]
     klines = fetch_klines(sym)
     if not klines:
         return None
-    return analyze(sym, klines, round(coin["change"], 2), learner, opt_params)
+    # 多時間框架確認
+    htf_trend = get_higher_tf_trend(sym)
+    return analyze(sym, klines, round(coin["change"], 2), learner, opt_params,
+                   btc_trend=btc_trend, htf_trend=htf_trend)
 
 
 # ============================================================
 #  核心分析
 # ============================================================
 
-def analyze(symbol, klines, change24h, learner, opt_params=None):
+def analyze(symbol, klines, change24h, learner, opt_params=None,
+            btc_trend=0, htf_trend=0):
     closes = [float(k['close']) for k in klines if float(k.get('close', 0)) > 0]
     if len(closes) < 60:
         return None
@@ -323,6 +444,12 @@ def analyze(symbol, klines, change24h, learner, opt_params=None):
 
     # OBV 趨勢
     obv_dir = obv_trend(obv_vals)
+
+    # RSI 背離偵測
+    divergence = detect_rsi_divergence(closes, rsi_vals)
+
+    # 支撐阻力位
+    support, resistance = calc_support_resistance(closes)
 
     # 對齊索引
     RSI_PERIOD = 14
@@ -424,8 +551,54 @@ def analyze(symbol, klines, change24h, learner, opt_params=None):
             elif recent_acc < 40:
                 recent_bonus = 0.80
 
-        # 綜合分數
-        score = r * confidence * weight * regime_bonus * obv_bonus * recent_bonus
+        # BTC 大盤過濾（核心！逆大盤操作大幅降分）
+        btc_bonus = 1.0
+        if strat in ("抄底", "追多") and btc_trend == -1:
+            btc_bonus = 0.6   # BTC 下跌時做多山寨幣 → 大幅降分
+        elif strat == "做空" and btc_trend == 1:
+            btc_bonus = 0.7   # BTC 上漲時做空 → 降分
+        elif strat in ("抄底", "追多") and btc_trend == 1:
+            btc_bonus = 1.15  # 順大盤做多 → 加分
+        elif strat == "做空" and btc_trend == -1:
+            btc_bonus = 1.15  # 順大盤做空 → 加分
+
+        # 多時間框架確認（5 分鐘線方向一致才加分）
+        htf_bonus = 1.0
+        if strat in ("抄底", "追多") and htf_trend == 1:
+            htf_bonus = 1.2   # 高時間框架做多確認
+        elif strat == "做空" and htf_trend == -1:
+            htf_bonus = 1.2   # 高時間框架做空確認
+        elif strat in ("抄底", "追多") and htf_trend == -1:
+            htf_bonus = 0.7   # 高時間框架反向 → 大幅降分
+        elif strat == "做空" and htf_trend == 1:
+            htf_bonus = 0.7
+
+        # RSI 背離加成（強反轉信號）
+        div_bonus = 1.0
+        if divergence == 1 and strat in ("抄底",):
+            div_bonus = 1.3   # 看漲背離 + 抄底 = 強信號
+        elif divergence == -1 and strat == "做空":
+            div_bonus = 1.3   # 看跌背離 + 做空 = 強信號
+        elif divergence == 1 and strat == "做空":
+            div_bonus = 0.6   # 看漲背離做空 = 危險
+        elif divergence == -1 and strat in ("抄底", "追多"):
+            div_bonus = 0.6   # 看跌背離做多 = 危險
+
+        # 支撐阻力位加成
+        sr_bonus = 1.0
+        current_price = closes[-1]
+        if support and strat in ("抄底",):
+            dist_to_support = abs(current_price - support) / current_price
+            if dist_to_support < 0.005:  # 接近支撐位
+                sr_bonus = 1.2
+        if resistance and strat == "做空":
+            dist_to_resistance = abs(current_price - resistance) / current_price
+            if dist_to_resistance < 0.005:  # 接近阻力位
+                sr_bonus = 1.2
+
+        # 綜合分數（新增 BTC/HTF/背離/支撐阻力）
+        score = (r * confidence * weight * regime_bonus * obv_bonus
+                 * recent_bonus * btc_bonus * htf_bonus * div_bonus * sr_bonus)
 
         strat_results[strat] = {
             "rate": r, "total": s["total"], "win": s["win"],
@@ -434,6 +607,10 @@ def analyze(symbol, klines, change24h, learner, opt_params=None):
             "regime_bonus": round(regime_bonus, 2),
             "obv_bonus": round(obv_bonus, 2),
             "recent_bonus": round(recent_bonus, 2),
+            "btc_bonus": round(btc_bonus, 2),
+            "htf_bonus": round(htf_bonus, 2),
+            "div_bonus": round(div_bonus, 2),
+            "sr_bonus": round(sr_bonus, 2),
             "score": round(score, 1),
         }
 
@@ -493,6 +670,27 @@ def analyze(symbol, klines, change24h, learner, opt_params=None):
     else:
         signal_strength = "WEAK"
 
+    # Kelly 公式倉位建議
+    win_rate_dec = best["rate"] / 100
+    avg_win_loss = abs(tp_dist / sl_dist) if sl_dist > 0 else 1
+    kelly_pct = 0
+    if avg_win_loss > 0:
+        kelly_pct = max(0, win_rate_dec - (1 - win_rate_dec) / avg_win_loss)
+        kelly_pct = min(kelly_pct * 100, 25)  # 上限 25%（半 Kelly）
+    kelly_pct = round(kelly_pct, 1)
+
+    # 背離描述
+    div_str = {1: "bullish", -1: "bearish", 0: "none"}.get(divergence, "none")
+
+    # 支撐阻力
+    sr_str = ""
+    if support:
+        sr_str += f"S:{round(support, 6)} "
+    if resistance:
+        sr_str += f"R:{round(resistance, 6)}"
+    if not sr_str:
+        sr_str = "N/A"
+
     return {
         "symbol":         symbol,
         "change24h":      change24h,
@@ -503,6 +701,10 @@ def analyze(symbol, klines, change24h, learner, opt_params=None):
         "atr":            round(current_atr, 6),
         "regime":         regime,
         "obv_dir":        obv_dir,
+        "divergence":     div_str,
+        "btc_trend":      btc_trend,
+        "htf_trend":      htf_trend,
+        "support_resistance": sr_str,
         # 最佳策略
         "best_strat":     best_strat,
         "best_rate":      best["rate"],
@@ -513,8 +715,13 @@ def analyze(symbol, klines, change24h, learner, opt_params=None):
         "regime_bonus":   best["regime_bonus"],
         "obv_bonus":      best["obv_bonus"],
         "recent_bonus":   best["recent_bonus"],
+        "btc_bonus":      best.get("btc_bonus", 1.0),
+        "htf_bonus":      best.get("htf_bonus", 1.0),
+        "div_bonus":      best.get("div_bonus", 1.0),
+        "sr_bonus":       best.get("sr_bonus", 1.0),
         "signal_strength": signal_strength,
         "detail":         detail,
+        "kelly_pct":      kelly_pct,
         # 進出場
         "tp":             tp_price,
         "sl":             sl_price,
@@ -580,8 +787,13 @@ def run_scan(learner, round_num):
               f"持倉期={opt_params['best_hold_period']}根 "
               f"(上次優化: {opt_params['last_optimized']})")
 
+    # Step 0.8：取得 BTC 大盤趨勢
+    btc_trend = get_btc_trend()
+    btc_str = {1: "UP", -1: "DOWN", 0: "NEUTRAL"}.get(btc_trend, "?")
+    print(f"\n[BTC] 大盤趨勢: {color(btc_str, 'green' if btc_trend == 1 else 'red' if btc_trend == -1 else 'yellow')}")
+
     # Step 1：抓全市場行情
-    print("\n[INFO] 正在抓取全市場行情...")
+    print("[INFO] 正在抓取全市場行情...")
     tickers = fetch_tickers()
     perps = []
     for t in tickers:
@@ -632,7 +844,7 @@ def run_scan(learner, round_num):
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_map = {
-            executor.submit(fetch_and_analyze, coin, learner, opt_params): coin
+            executor.submit(fetch_and_analyze, coin, learner, opt_params, btc_trend): coin
             for coin in pool
         }
         done_count = 0
@@ -687,24 +899,29 @@ def run_scan(learner, round_num):
     for rank, r in enumerate(top):
         chg = f"+{r['change24h']:.2f}%" if r['change24h'] > 0 else f"{r['change24h']:.2f}%"
         obv_str = {1: "Up", -1: "Down", 0: "Flat"}.get(r['obv_dir'], "?")
+        htf_str = {1: "Up", -1: "Down", 0: "?"}.get(r.get('htf_trend', 0), "?")
         strength_color = {'STRONG': 'green', 'MEDIUM': 'yellow', 'WEAK': 'red'}
+        div_str = r.get('divergence', 'none')
 
         print(f"\n{medals[rank]} {color(r['symbol'], 'cyan')}  24h: {chg}")
         print(f"   Price: {r['price']}  |  RSI: {r['rsi']}  |  MFI: {r['mfi']}")
         print(f"   BB: {r['bb_pos']}  |  ATR: {r['atr']}  |  OBV: {obv_str}")
-        print(f"   Regime: {r['regime']}")
+        print(f"   Regime: {r['regime']}  |  5m Trend: {htf_str}  |  Divergence: {div_str}")
+        print(f"   S/R: {r.get('support_resistance', 'N/A')}")
         print(f"   策略：{r['best_strat']} {color(str(r['best_rate']) + '%', 'green')}"
               f"（{r['best_total']}次）")
         print(f"   Signal: {color(r['signal_strength'], strength_color.get(r['signal_strength'], 'white'))}"
               f"  Score: {r['best_score']}")
         print(f"   Weights: learn={r['weight']} regime={r['regime_bonus']} "
-              f"obv={r['obv_bonus']} recent={r['recent_bonus']} "
-              f"conf={r['confidence']}")
+              f"btc={r.get('btc_bonus', 1.0)} htf={r.get('htf_bonus', 1.0)} "
+              f"obv={r['obv_bonus']} div={r.get('div_bonus', 1.0)} "
+              f"sr={r.get('sr_bonus', 1.0)} recent={r['recent_bonus']}")
         print(f"   明細：{r['detail']}")
         print(f"   進場: {r['price']}  "
               f"止盈: {r['tp']} (+{r['tp_pct']}%)  "
               f"止損: {r['sl']} (-{r['sl_pct']}%)  "
               f"風報比: 1:{r['rr']}")
+        print(f"   建議倉位: {r.get('kelly_pct', 0)}% (Kelly)")
         print(f"   " + "-" * 56)
 
     # Step 6：學習統計
