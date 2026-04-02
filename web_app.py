@@ -261,6 +261,35 @@ def api_state():
         })
 
 
+@app.route("/api/backtest/<symbol>")
+def api_backtest(symbol):
+    """即時回測單一幣種"""
+    from backtest import fetch_klines_backtest, run_backtest, analyze_trades
+    klines = fetch_klines_backtest(symbol, limit=300)
+    if not klines:
+        return jsonify({"error": "No data"}), 404
+    trades = run_backtest(symbol, klines)
+    if not trades:
+        return jsonify({"error": "Insufficient trades"}), 404
+    results = analyze_trades(trades)
+    # Convert int keys to str for JSON
+    serializable = {}
+    for hp, strats in results.items():
+        serializable[str(hp)] = {}
+        for strat, r in strats.items():
+            serializable[str(hp)][strat] = r
+    return jsonify({"symbol": symbol, "results": serializable})
+
+
+@app.route("/api/learning")
+def api_learning():
+    """查看完整學習資料"""
+    if os.path.exists(LEARNING_FILE):
+        with open(LEARNING_FILE, 'r', encoding='utf-8') as f:
+            return jsonify(json.load(f))
+    return jsonify({"error": "No learning data yet"}), 404
+
+
 if __name__ == "__main__":
     # 啟動背景掃描
     scan_thread = threading.Thread(target=run_background_scan, daemon=True)
