@@ -492,3 +492,177 @@ class LearningEngine:
             print(f"[LEARN] 清理了 {removed} 組過期權重")
             self.save()
         return removed
+
+    # ---- 自動優化引擎 ----
+
+    def auto_optimize(self, symbols, fetch_klines_fn, backtest_fn, analyze_trades_fn):
+        """
+        自動回測 → 分析 → 更新最佳參數
+        回傳優化後的參數字典
+        """
+        # 載入現有最佳參數
+        if "optimized_params" not in self.data:
+            self.data["optimized_params"] = {
+                "rsi_short_thresh": 70,
+                "rsi_long_thresh": 30,
+                "best_hold_period": 5,
+                "last_optimized": None,
+                "optimization_count": 0,
+                "history": [],  # 歷次優化記錄
+            }
+
+        params = self.data["optimized_params"]
+        print(f"[AUTO-OPT] 開始自動優化（第 {params['optimization_count'] + 1} 次）...")
+
+        # 收集所有交易數據
+        all_trades_by_hp = defaultdict(lambda: {"做空": [], "抄底": [], "追多": []})
+        rsi_test_results = []
+        tested = 0
+
+        for sym in symbols[:8]:  # 最多測 8 個幣種（速度考量）
+            klines = fetch_klines_fn(sym)
+            if not klines:
+                continue
+
+            # 標準回測
+            trades = backtest_fn(sym, klines, hold_periods=[3, 5, 8, 10, 15])
+            if not trades:
+                continue
+            tested += 1
+
+            for hp, strats in trades.items():
+                for strat, t_list in strats.items():
+                    all_trades_by_hp[hp][strat].extend(t_list)
+
+            # RSI 閾值測試
+            for short_th in [65, 70, 75, 80]:
+                for long_th in [20, 25, 30, 35]:
+                    t = backtest_fn(sym, klines, hold_periods=[5],
+                                    rsi_short_thresh=short_th, rsi_long_thresh=long_th)
+                    if not t:
+                        continue
+                    for strat in ["做空", "抄底", "追多"]:
+                        t_list = t[5][strat]
+                        if len(t_list) >= 3:
+                            wins = sum(1 for x in t_list if x["pnl_pct"] > 0)
+                            rsi_test_results.append({
+                                "strat": strat,
+                                "rsi_short": short_th,
+                                "rsi_long": long_th,
+                                "trades": len(t_list),
+                                "win_rate": round(wins / len(t_list) * 100, 1),
+                            })
+
+        if tested == 0:
+            print(f"[AUTO-OPT] 無法取得足夠數據，保持現有參數")
+            return params
+
+        # 找最佳持倉期
+        best_hp = params["best_hold_period"]
+        best_hp_score = -999
+        for hp, strats in all_trades_by_hp.items():
+            total_trades = sum(len(v) for v in strats.values())
+            total_wins = sum(sum(1 for t in v if t["pnl_pct"] > 0) for v in strats.values())
+            if total_trades >= 10:
+                wr = total_wins / total_trades * 100
+                # 分數 = 勝率，但偏好較少 K 線（速度更快）
+                score = wr - (hp * 0.3)  # 每多 1 根扣 0.3 分
+                if score > best_hp_score:
+                    best_hp_score = score
+                    best_hp = hp
+
+        # 找最佳 RSI 閾值
+        best_short = params["rsi_short_thresh"]
+        best_long = params["rsi_long_thresh"]
+
+        if rsi_test_results:
+            # 按策略分組找最佳
+            for strat in ["做空", "抄底", "追多"]:
+                strat_r = [r for r in rsi_test_results
+                           if r["strat"] == strat and r["trades"] >= 5]
+                if strat_r:
+                    best = max(strat_r, key=lambda x: x["win_rate"])
+                    if strat == "做空" and best["win_rate"] > 55:
+                        best_short = best["rsi_short"]
+                    elif strat == "抄底" and best["win_rate"] > 55:
+                        best_long = best["rsi_long"]
+
+        # 更新 regime bonus（根據實際數據）
+        regime_stats = self.data["stats"].get("regime_stats", {})
+        updated_bonus = dict(self.REGIME_BONUS)  # 複製預設值
+        for regime, strats in regime_stats.items():
+            if regime not in updated_bonus:
+                continue
+            for strat, v in strats.items():
+                total = v["wins"] + v["losses"]
+                if total >= 5:
+                    actual_wr = v["wins"] / total
+                    # 根據勝率調整 bonus：>60% 加成，<40% 懲罰
+                    if actual_wr > 0.6:
+                        updated_bonus[regime][strat] = min(
+                            updated_bonus[regime][strat] * 1.1, 1.5
+                        )
+                    elif actual_wr < 0.4:
+                        updated_bonus[regime][strat] = max(
+                            updated_bonus[regime][strat] * 0.85, 0.4
+                        )
+
+        # 計算優化前後對比
+        old_params = {
+            "rsi_short": params["rsi_short_thresh"],
+            "rsi_long": params["rsi_long_thresh"],
+            "hold": params["best_hold_period"],
+        }
+        new_params = {
+            "rsi_short": best_short,
+            "rsi_long": best_long,
+            "hold": best_hp,
+        }
+
+        # 保存
+        params["rsi_short_thresh"] = best_short
+        params["rsi_long_thresh"] = best_long
+        params["best_hold_period"] = best_hp
+        params["last_optimized"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        params["optimization_count"] += 1
+
+        # 記錄優化歷史
+        opt_record = {
+            "time": params["last_optimized"],
+            "tested_symbols": tested,
+            "old": old_params,
+            "new": new_params,
+            "changed": old_params != new_params,
+        }
+        params["history"].append(opt_record)
+        if len(params["history"]) > 50:
+            params["history"] = params["history"][-50:]
+
+        self.REGIME_BONUS = updated_bonus
+        self.data["optimized_params"] = params
+        self.save()
+
+        # 輸出結果
+        changed = old_params != new_params
+        if changed:
+            print(f"[AUTO-OPT] 參數已更新！")
+            if old_params["rsi_short"] != new_params["rsi_short"]:
+                print(f"  RSI 做空閾值: {old_params['rsi_short']} -> {new_params['rsi_short']}")
+            if old_params["rsi_long"] != new_params["rsi_long"]:
+                print(f"  RSI 抄底閾值: {old_params['rsi_long']} -> {new_params['rsi_long']}")
+            if old_params["hold"] != new_params["hold"]:
+                print(f"  最佳持倉期: {old_params['hold']} -> {new_params['hold']} 根")
+        else:
+            print(f"[AUTO-OPT] 現有參數已是最佳，無需調整")
+
+        print(f"[AUTO-OPT] 測試了 {tested} 個幣種，完成第 {params['optimization_count']} 次優化")
+
+        return params
+
+    def get_optimized_params(self):
+        """取得目前的最佳參數"""
+        return self.data.get("optimized_params", {
+            "rsi_short_thresh": 70,
+            "rsi_long_thresh": 30,
+            "best_hold_period": 5,
+        })

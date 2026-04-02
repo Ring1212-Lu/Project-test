@@ -61,6 +61,9 @@ LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learni
 # 連續虧損保護
 MAX_CONSECUTIVE_LOSSES = 3  # 連續虧損超過此數，降低信心分數
 
+# 自動優化間隔（每 N 輪執行一次回測優化）
+AUTO_OPTIMIZE_INTERVAL = 10
+
 
 # ============================================================
 #  技術指標（優化版）
@@ -279,20 +282,20 @@ def fetch_klines(symbol):
     return []
 
 
-def fetch_and_analyze(coin, learner):
+def fetch_and_analyze(coin, learner, opt_params=None):
     """單一幣種：抓取 + 分析（供並行使用）"""
     sym = coin["symbol"]
     klines = fetch_klines(sym)
     if not klines:
         return None
-    return analyze(sym, klines, round(coin["change"], 2), learner)
+    return analyze(sym, klines, round(coin["change"], 2), learner, opt_params)
 
 
 # ============================================================
 #  核心分析
 # ============================================================
 
-def analyze(symbol, klines, change24h, learner):
+def analyze(symbol, klines, change24h, learner, opt_params=None):
     closes = [float(k['close']) for k in klines if float(k.get('close', 0)) > 0]
     if len(closes) < 60:
         return None
@@ -327,6 +330,15 @@ def analyze(symbol, klines, change24h, learner):
 
     length = min(len(rsi_vals), len(mfi_vals))
 
+    # 使用優化參數（如果有的話）
+    rsi_short_th = 70
+    rsi_long_th = 30
+    hold_period = 5
+    if opt_params:
+        rsi_short_th = opt_params.get("rsi_short_thresh", 70)
+        rsi_long_th = opt_params.get("rsi_long_thresh", 30)
+        hold_period = opt_params.get("best_hold_period", 5)
+
     # 統計計數
     stats = {
         "做空": {"win": 0, "total": 0, "vol_sum": 0},
@@ -334,16 +346,16 @@ def analyze(symbol, klines, change24h, learner):
         "追多": {"win": 0, "total": 0, "vol_sum": 0},
     }
 
-    for i in range(6, length - 5):
+    for i in range(6, length - hold_period):
         ci = i + RSI_OFF
-        if ci + 5 >= len(closes) or ci < 2:
+        if ci + hold_period >= len(closes) or ci < 2:
             continue
         # MACD 安全索引
         if ci >= len(macd_hist) or ci - 1 < 0:
             continue
 
         price      = closes[ci]
-        next_price = closes[ci + 5]
+        next_price = closes[ci + hold_period]
         rsi_prev   = rsi_vals[i - 1] if i - 1 >= 0 else 50
         rsi_cur    = rsi_vals[i]
         mfi_cur    = mfi_vals[i] if i < len(mfi_vals) else 50
@@ -356,17 +368,15 @@ def analyze(symbol, klines, change24h, learner):
         except IndexError:
             vol = 1.0
 
-        # ---- 做空條件 ----
-        # RSI 從超買回落 + MACD 動能向下 + 非超賣區
-        if rsi_prev > 70 and rsi_cur < rsi_prev and macd_down and rsi_cur > 30:
+        # ---- 做空條件（使用優化閾值）----
+        if rsi_prev > rsi_short_th and rsi_cur < rsi_prev and macd_down and rsi_cur > 30:
             stats["做空"]["total"] += 1
             stats["做空"]["vol_sum"] += vol
             if next_price < price:
                 stats["做空"]["win"] += 1
 
-        # ---- 抄底條件 ----
-        # RSI 超賣回升 + MFI 低位 + MACD 動能向上
-        if rsi_prev < 30 and rsi_cur > rsi_prev and mfi_cur < 25 and macd_up:
+        # ---- 抄底條件（使用優化閾值）----
+        if rsi_prev < rsi_long_th and rsi_cur > rsi_prev and mfi_cur < 25 and macd_up:
             stats["抄底"]["total"] += 1
             stats["抄底"]["vol_sum"] += vol
             if next_price > price:
@@ -537,6 +547,39 @@ def run_scan(learner, round_num):
     if round_num % 50 == 0:
         learner.cleanup_stale_weights()
 
+    # Step 0.5：自動優化（每 AUTO_OPTIMIZE_INTERVAL 輪執行一次）
+    opt_params = learner.get_optimized_params()
+    if round_num % AUTO_OPTIMIZE_INTERVAL == 0 and round_num > 1:
+        try:
+            from backtest import fetch_klines_backtest, run_backtest, analyze_trades
+            # 取成交量前幾的幣種做回測
+            top_syms = []
+            temp_tickers = fetch_tickers()
+            for t in temp_tickers:
+                sym = t.get("symbol", "")
+                if sym.endswith("_USDT_PERP"):
+                    try:
+                        vol = float(t.get("amount", 0))
+                        if vol > 50000:
+                            top_syms.append((sym, vol))
+                    except (ValueError, TypeError):
+                        pass
+            top_syms.sort(key=lambda x: x[1], reverse=True)
+            opt_symbols = [s[0] for s in top_syms[:8]]
+
+            if opt_symbols:
+                opt_params = learner.auto_optimize(
+                    opt_symbols, fetch_klines_backtest, run_backtest, analyze_trades
+                )
+        except Exception as e:
+            print(f"[AUTO-OPT] 優化過程出錯: {type(e).__name__}: {e}")
+
+    if opt_params.get("last_optimized"):
+        print(f"   優化參數：RSI 做空>{opt_params['rsi_short_thresh']} "
+              f"抄底<{opt_params['rsi_long_thresh']} "
+              f"持倉期={opt_params['best_hold_period']}根 "
+              f"(上次優化: {opt_params['last_optimized']})")
+
     # Step 1：抓全市場行情
     print("\n[INFO] 正在抓取全市場行情...")
     tickers = fetch_tickers()
@@ -589,7 +632,7 @@ def run_scan(learner, round_num):
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_map = {
-            executor.submit(fetch_and_analyze, coin, learner): coin
+            executor.submit(fetch_and_analyze, coin, learner, opt_params): coin
             for coin in pool
         }
         done_count = 0
