@@ -11,12 +11,13 @@ import os
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from flask import Flask, render_template, jsonify
 
 from crypto_monitor_v2 import (
-    fetch_tickers, fetch_klines, analyze,
-    TOP15_PCT, TOP15_MAX, TOP_N, INTERVAL
+    fetch_tickers, fetch_and_analyze, analyze,
+    TOP15_PCT, TOP15_MAX, TOP_N, INTERVAL, MAX_WORKERS
 )
 from learning_engine import LearningEngine
 
@@ -123,18 +124,25 @@ def run_background_scan():
 
         add_log(f"共 {len(perps)} 個合約，分析池 {len(pool)} 個")
 
-        # 逐一分析
+        # 並行分析
+        add_log(f"並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒）...")
+        t_start = time.time()
         results = []
-        for idx, coin in enumerate(pool, 1):
-            sym = coin["symbol"]
-            add_log(f"[{idx}/{len(pool)}] 分析 {sym} ({coin['change']:+.1f}%)")
-            klines = fetch_klines(sym)
-            if not klines:
-                continue
-            res = analyze(sym, klines, round(coin["change"], 2), learner)
-            if res:
-                results.append(res)
-            time.sleep(0.15)
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_map = {
+                executor.submit(fetch_and_analyze, coin, learner): coin
+                for coin in pool
+            }
+            for future in as_completed(future_map):
+                coin = future_map[future]
+                try:
+                    res = future.result()
+                    if res:
+                        results.append(res)
+                except Exception:
+                    pass
+        elapsed = round(time.time() - t_start, 1)
+        add_log(f"分析完成，耗時 {elapsed} 秒")
 
         if not results:
             add_log("本輪無足夠樣本的幣種")

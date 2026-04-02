@@ -23,6 +23,7 @@ import time
 import json
 import os
 import math
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from statistics import mean, stdev
 
@@ -46,8 +47,9 @@ TICK_URL   = "https://api.pionex.com/api/v1/market/tickers"
 INTERVAL   = 60        # 秒，每輪間隔
 TOP_N      = 3         # 最終回報前幾名
 MIN_SIG    = 3         # 最低訊號次數門檻
-TOP15_PCT  = 0.15      # 每側（漲/跌）取百分比
-TOP15_MAX  = 15        # 每側最多取幾個
+TOP15_PCT  = 0.10      # 每側（漲/跌）取百分比（縮小加速）
+TOP15_MAX  = 10        # 每側最多取幾個（縮小加速）
+MAX_WORKERS = 10       # 並行抓取執行緒數
 
 # ATR 倍數（自適應止盈止損）
 ATR_TP_MULT = {"做空": 2.0, "抄底": 2.5, "追多": 3.0}
@@ -245,7 +247,7 @@ def fetch_tickers():
 
 def fetch_klines(symbol):
     try:
-        r = requests.get(BASE_URL, params={"symbol": symbol, "interval": "1M", "limit": 300}, timeout=20)
+        r = requests.get(BASE_URL, params={"symbol": symbol, "interval": "1M", "limit": 120}, timeout=10)
         if r.status_code == 200:
             kl = r.json().get("data", {}).get("klines", [])
             if isinstance(kl, list) and len(kl) >= 60:
@@ -253,6 +255,15 @@ def fetch_klines(symbol):
     except Exception as e:
         print(f"    [WARN] {symbol} 抓取失敗: {e}")
     return []
+
+
+def fetch_and_analyze(coin, learner):
+    """單一幣種：抓取 + 分析（供並行使用）"""
+    sym = coin["symbol"]
+    klines = fetch_klines(sym)
+    if not klines:
+        return None
+    return analyze(sym, klines, round(coin["change"], 2), learner)
 
 
 # ============================================================
@@ -549,26 +560,37 @@ def run_scan(learner, round_num):
     if losers:
         print(f"  跌幅榜首：{losers[0]['symbol']} {losers[0]['change']:.1f}%")
 
-    # Step 2：逐一分析
-    print(f"\n[INFO] 開始分析 {len(pool)} 個幣種...")
+    # Step 2：並行分析（大幅加速）
+    print(f"\n[INFO] 開始並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒）...")
+    t_start = time.time()
     results = []
-    for idx, coin in enumerate(pool, 1):
-        sym = coin["symbol"]
-        direction = "+" if coin["change"] > 0 else ""
-        print(f"  [{idx:02d}/{len(pool)}] {sym} ({direction}{coin['change']:.1f}%)", end="  ", flush=True)
-        klines = fetch_klines(sym)
-        if not klines:
-            print("跳過（資料不足）")
-            continue
-        res = analyze(sym, klines, round(coin["change"], 2), learner)
-        if res:
-            results.append(res)
-            print(f"{res['best_strat']} {res['best_rate']}% "
-                  f"[{res['signal_strength']}] "
-                  f"(score:{res['best_score']}, w:{res['weight']})")
-        else:
-            print("跳過（訊號不足）")
-        time.sleep(0.15)
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_map = {
+            executor.submit(fetch_and_analyze, coin, learner): coin
+            for coin in pool
+        }
+        done_count = 0
+        for future in as_completed(future_map):
+            done_count += 1
+            coin = future_map[future]
+            sym = coin["symbol"]
+            direction = "+" if coin["change"] > 0 else ""
+            try:
+                res = future.result()
+                if res:
+                    results.append(res)
+                    print(f"  [{done_count:02d}/{len(pool)}] {sym} ({direction}{coin['change']:.1f}%)  "
+                          f"{res['best_strat']} {res['best_rate']}% "
+                          f"[{res['signal_strength']}] "
+                          f"(score:{res['best_score']})")
+                else:
+                    print(f"  [{done_count:02d}/{len(pool)}] {sym} ({direction}{coin['change']:.1f}%)  跳過")
+            except Exception as e:
+                print(f"  [{done_count:02d}/{len(pool)}] {sym} 錯誤: {e}")
+
+    elapsed = round(time.time() - t_start, 1)
+    print(f"\n[INFO] 分析完成，耗時 {elapsed} 秒")
 
     if not results:
         print("\n[WARN] 本輪無足夠樣本的幣種，請稍後再試")
