@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 learning_data.json
+trade_log.json
+.env
