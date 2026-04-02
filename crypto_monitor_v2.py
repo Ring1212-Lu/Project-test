@@ -547,58 +547,63 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         recent_bonus = 1.0
         if recent_acc is not None and recent_n >= 3:
             if recent_acc > 60:
-                recent_bonus = 1.15
+                recent_bonus = 1.1
             elif recent_acc < 40:
-                recent_bonus = 0.80
+                recent_bonus = 0.9
 
-        # BTC 大盤過濾（核心！逆大盤操作大幅降分）
-        btc_bonus = 1.0
+        # === 環境因子（用加法混合，避免連乘壓縮） ===
+        # 每個因子貢獻 -0.15 ~ +0.15，最後加總到基礎分數
+        env_adjustment = 0.0
+
+        # BTC 大盤
         if strat in ("抄底", "追多") and btc_trend == -1:
-            btc_bonus = 0.6   # BTC 下跌時做多山寨幣 → 大幅降分
+            env_adjustment -= 0.15   # 逆大盤做多
         elif strat == "做空" and btc_trend == 1:
-            btc_bonus = 0.7   # BTC 上漲時做空 → 降分
+            env_adjustment -= 0.12   # 逆大盤做空
         elif strat in ("抄底", "追多") and btc_trend == 1:
-            btc_bonus = 1.15  # 順大盤做多 → 加分
+            env_adjustment += 0.10   # 順大盤做多
         elif strat == "做空" and btc_trend == -1:
-            btc_bonus = 1.15  # 順大盤做空 → 加分
+            env_adjustment += 0.10   # 順大盤做空
 
-        # 多時間框架確認（5 分鐘線方向一致才加分）
-        htf_bonus = 1.0
+        # 多時間框架確認
         if strat in ("抄底", "追多") and htf_trend == 1:
-            htf_bonus = 1.2   # 高時間框架做多確認
+            env_adjustment += 0.12   # HTF 確認做多
         elif strat == "做空" and htf_trend == -1:
-            htf_bonus = 1.2   # 高時間框架做空確認
+            env_adjustment += 0.12   # HTF 確認做空
         elif strat in ("抄底", "追多") and htf_trend == -1:
-            htf_bonus = 0.7   # 高時間框架反向 → 大幅降分
+            env_adjustment -= 0.10   # HTF 反向
         elif strat == "做空" and htf_trend == 1:
-            htf_bonus = 0.7
+            env_adjustment -= 0.10
 
-        # RSI 背離加成（強反轉信號）
-        div_bonus = 1.0
+        # RSI 背離（強信號，給較大加成）
         if divergence == 1 and strat in ("抄底",):
-            div_bonus = 1.3   # 看漲背離 + 抄底 = 強信號
+            env_adjustment += 0.20   # 看漲背離 + 抄底
         elif divergence == -1 and strat == "做空":
-            div_bonus = 1.3   # 看跌背離 + 做空 = 強信號
+            env_adjustment += 0.20   # 看跌背離 + 做空
         elif divergence == 1 and strat == "做空":
-            div_bonus = 0.6   # 看漲背離做空 = 危險
+            env_adjustment -= 0.12   # 看漲背離做空
         elif divergence == -1 and strat in ("抄底", "追多"):
-            div_bonus = 0.6   # 看跌背離做多 = 危險
+            env_adjustment -= 0.12   # 看跌背離做多
 
-        # 支撐阻力位加成
-        sr_bonus = 1.0
+        # 支撐阻力位
         current_price = closes[-1]
         if support and strat in ("抄底",):
             dist_to_support = abs(current_price - support) / current_price
-            if dist_to_support < 0.005:  # 接近支撐位
-                sr_bonus = 1.2
+            if dist_to_support < 0.005:
+                env_adjustment += 0.10
         if resistance and strat == "做空":
             dist_to_resistance = abs(current_price - resistance) / current_price
-            if dist_to_resistance < 0.005:  # 接近阻力位
-                sr_bonus = 1.2
+            if dist_to_resistance < 0.005:
+                env_adjustment += 0.10
 
-        # 綜合分數（新增 BTC/HTF/背離/支撐阻力）
-        score = (r * confidence * weight * regime_bonus * obv_bonus
-                 * recent_bonus * btc_bonus * htf_bonus * div_bonus * sr_bonus)
+        # 環境因子轉乘數：0 → 1.0，+0.3 → 1.3，-0.3 → 0.7
+        # 但限制在 0.7 ~ 1.4 之間（不會太極端）
+        env_multiplier = max(0.7, min(1.4, 1.0 + env_adjustment))
+
+        # 綜合分數 = 基礎分(勝率×信心×學習權重) × 核心過濾(regime×obv×recent) × 環境因子
+        base_score = r * confidence * weight
+        core_filter = regime_bonus * obv_bonus * recent_bonus
+        score = base_score * core_filter * env_multiplier
 
         strat_results[strat] = {
             "rate": r, "total": s["total"], "win": s["win"],
@@ -607,10 +612,8 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             "regime_bonus": round(regime_bonus, 2),
             "obv_bonus": round(obv_bonus, 2),
             "recent_bonus": round(recent_bonus, 2),
-            "btc_bonus": round(btc_bonus, 2),
-            "htf_bonus": round(htf_bonus, 2),
-            "div_bonus": round(div_bonus, 2),
-            "sr_bonus": round(sr_bonus, 2),
+            "env_multiplier": round(env_multiplier, 2),
+            "env_detail": f"btc/htf/div/sr={env_adjustment:+.2f}",
             "score": round(score, 1),
         }
 
@@ -715,10 +718,8 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         "regime_bonus":   best["regime_bonus"],
         "obv_bonus":      best["obv_bonus"],
         "recent_bonus":   best["recent_bonus"],
-        "btc_bonus":      best.get("btc_bonus", 1.0),
-        "htf_bonus":      best.get("htf_bonus", 1.0),
-        "div_bonus":      best.get("div_bonus", 1.0),
-        "sr_bonus":       best.get("sr_bonus", 1.0),
+        "env_multiplier": best.get("env_multiplier", 1.0),
+        "env_detail":     best.get("env_detail", ""),
         "signal_strength": signal_strength,
         "detail":         detail,
         "kelly_pct":      kelly_pct,
@@ -912,10 +913,10 @@ def run_scan(learner, round_num):
               f"（{r['best_total']}次）")
         print(f"   Signal: {color(r['signal_strength'], strength_color.get(r['signal_strength'], 'white'))}"
               f"  Score: {r['best_score']}")
-        print(f"   Weights: learn={r['weight']} regime={r['regime_bonus']} "
-              f"btc={r.get('btc_bonus', 1.0)} htf={r.get('htf_bonus', 1.0)} "
-              f"obv={r['obv_bonus']} div={r.get('div_bonus', 1.0)} "
-              f"sr={r.get('sr_bonus', 1.0)} recent={r['recent_bonus']}")
+        print(f"   Core: learn={r['weight']} regime={r['regime_bonus']} "
+              f"obv={r['obv_bonus']} recent={r['recent_bonus']} "
+              f"conf={r['confidence']}")
+        print(f"   Env: {r.get('env_multiplier', 1.0)} ({r.get('env_detail', '')})")
         print(f"   明細：{r['detail']}")
         print(f"   進場: {r['price']}  "
               f"止盈: {r['tp']} (+{r['tp_pct']}%)  "
