@@ -47,9 +47,10 @@ TICK_URL   = "https://api.pionex.com/api/v1/market/tickers"
 INTERVAL   = 60        # 秒，每輪間隔
 TOP_N      = 3         # 最終回報前幾名
 MIN_SIG    = 3         # 最低訊號次數門檻
-TOP15_PCT  = 0.10      # 每側（漲/跌）取百分比（縮小加速）
-TOP15_MAX  = 10        # 每側最多取幾個（縮小加速）
-MAX_WORKERS = 10       # 並行抓取執行緒數
+TOP15_PCT  = 0.10      # 每側（漲/跌）取百分比
+TOP15_MAX  = 10        # 每側最多取幾個
+MAX_WORKERS = 3        # 並行執行緒數（太多會被 API 擋）
+MAX_RETRIES = 3        # API 請求重試次數
 
 # ATR 倍數（自適應止盈止損）
 ATR_TP_MULT = {"做空": 2.0, "抄底": 2.5, "追多": 3.0}
@@ -237,23 +238,44 @@ def obv_trend(obv_vals, lookback=10):
 
 def fetch_tickers():
     try:
-        r = requests.get(TICK_URL, params={"type": "PERP"}, timeout=15)
+        r = _session.get(TICK_URL, params={"type": "PERP"}, timeout=15)
         if r.status_code == 200:
             return r.json().get("data", {}).get("tickers", [])
     except Exception as e:
-        print(f"  [ERROR] 行情抓取失敗: {e}")
+        print(f"  [ERROR] 行情抓取失敗: {type(e).__name__}: {e}")
     return []
+
+
+def _create_session():
+    """建立帶重試機制的 requests Session"""
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    session = requests.Session()
+    retry = Retry(
+        total=MAX_RETRIES,
+        backoff_factor=0.5,       # 0.5s, 1s, 2s
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET"],
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=5, pool_maxsize=5)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+# 全域 Session（連線池復用，避免反覆握手）
+_session = _create_session()
 
 
 def fetch_klines(symbol):
     try:
-        r = requests.get(BASE_URL, params={"symbol": symbol, "interval": "1M", "limit": 120}, timeout=10)
+        r = _session.get(BASE_URL, params={"symbol": symbol, "interval": "1M", "limit": 120}, timeout=15)
         if r.status_code == 200:
             kl = r.json().get("data", {}).get("klines", [])
             if isinstance(kl, list) and len(kl) >= 60:
                 return kl
     except Exception as e:
-        print(f"    [WARN] {symbol} 抓取失敗: {e}")
+        print(f"    [WARN] {symbol}: {type(e).__name__}")
     return []
 
 

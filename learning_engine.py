@@ -348,12 +348,17 @@ class LearningEngine:
             ss[strat]["expired"] += 1
 
     def _fetch_current_prices(self):
-        """批量取得目前行情價格"""
+        """批量取得目前行情價格（帶重試）"""
         import requests
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
         prices = {}
         try:
-            r = requests.get("https://api.pionex.com/api/v1/market/tickers",
-                             params={"type": "PERP"}, timeout=15)
+            session = requests.Session()
+            retry = Retry(total=3, backoff_factor=0.5, allowed_methods=["GET"])
+            session.mount("https://", HTTPAdapter(max_retries=retry))
+            r = session.get("https://api.pionex.com/api/v1/market/tickers",
+                            params={"type": "PERP"}, timeout=15)
             if r.status_code == 200:
                 tickers = r.json().get("data", {}).get("tickers", [])
                 for t in tickers:
