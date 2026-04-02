@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Monitor v2</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', 'Microsoft JhengHei', sans-serif;
+            background: #0a0e17;
+            color: #e0e6ed;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, #1a1f2e, #0d1117);
+            border-bottom: 1px solid #30363d;
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .header h1 {
+            font-size: 20px;
+            color: #58a6ff;
+        }
+        .header-info {
+            display: flex;
+            gap: 20px;
+            font-size: 13px;
+            color: #8b949e;
+            flex-wrap: wrap;
+        }
+        .status-dot {
+            display: inline-block;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
+        .status-scanning { background: #f0883e; animation: pulse 1s infinite; }
+        .status-waiting { background: #3fb950; }
+        .status-idle { background: #8b949e; }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+        /* Grid layout */
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 16px;
+            padding: 20px 24px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        .full-width { grid-column: 1 / -1; }
+        .two-cols { grid-column: span 2; }
+
+        /* Cards */
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 10px;
+            padding: 16px;
+        }
+        .card-title {
+            font-size: 14px;
+            color: #8b949e;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Stats row */
+        .stats-row {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .stat-item {
+            background: #0d1117;
+            border: 1px solid #21262d;
+            border-radius: 8px;
+            padding: 12px 16px;
+            flex: 1;
+            min-width: 120px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #58a6ff;
+        }
+        .stat-label {
+            font-size: 11px;
+            color: #8b949e;
+            margin-top: 4px;
+        }
+        .stat-green .stat-value { color: #3fb950; }
+        .stat-red .stat-value { color: #f85149; }
+        .stat-yellow .stat-value { color: #d29922; }
+
+        /* Top results */
+        .result-card {
+            background: #0d1117;
+            border: 1px solid #21262d;
+            border-radius: 10px;
+            padding: 16px;
+            transition: border-color 0.2s;
+        }
+        .result-card:hover { border-color: #58a6ff; }
+        .result-card.rank-1 { border-left: 3px solid #ffd700; }
+        .result-card.rank-2 { border-left: 3px solid #c0c0c0; }
+        .result-card.rank-3 { border-left: 3px solid #cd7f32; }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .result-symbol {
+            font-size: 18px;
+            font-weight: 700;
+            color: #58a6ff;
+        }
+        .result-medal {
+            font-size: 20px;
+        }
+        .result-change {
+            font-size: 14px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        .change-up { color: #3fb950; background: rgba(63,185,80,0.1); }
+        .change-down { color: #f85149; background: rgba(248,81,73,0.1); }
+
+        .result-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 16px;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+        .result-grid .label { color: #8b949e; }
+        .result-grid .value { text-align: right; }
+
+        .strategy-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .strat-short { background: rgba(248,81,73,0.15); color: #f85149; }
+        .strat-long { background: rgba(63,185,80,0.15); color: #3fb950; }
+        .strat-chase { background: rgba(210,153,34,0.15); color: #d29922; }
+
+        .signal-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .signal-STRONG { background: rgba(63,185,80,0.2); color: #3fb950; }
+        .signal-MEDIUM { background: rgba(210,153,34,0.2); color: #d29922; }
+        .signal-WEAK { background: rgba(248,81,73,0.2); color: #f85149; }
+
+        .entry-exit {
+            background: #161b22;
+            border-radius: 6px;
+            padding: 10px;
+            font-size: 12px;
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
+            gap: 8px;
+            text-align: center;
+        }
+        .entry-exit .ee-label { color: #8b949e; font-size: 10px; }
+        .entry-exit .ee-value { font-weight: 600; margin-top: 2px; }
+        .ee-tp { color: #3fb950; }
+        .ee-sl { color: #f85149; }
+        .ee-rr { color: #d29922; }
+
+        /* Weight bars */
+        .weight-bar-container {
+            margin-top: 8px;
+        }
+        .weight-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+            font-size: 11px;
+        }
+        .weight-label { width: 55px; color: #8b949e; text-align: right; }
+        .weight-bar {
+            flex: 1;
+            height: 6px;
+            background: #21262d;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .weight-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.5s;
+        }
+        .weight-val { width: 35px; font-size: 10px; color: #8b949e; }
+
+        /* Learning stats */
+        .learn-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+        .learn-item {
+            background: #0d1117;
+            border-radius: 6px;
+            padding: 10px;
+            text-align: center;
+        }
+        .learn-strat { font-weight: 600; margin-bottom: 4px; font-size: 13px; }
+        .learn-detail { font-size: 12px; color: #8b949e; }
+
+        /* Logs */
+        .log-box {
+            background: #0d1117;
+            border: 1px solid #21262d;
+            border-radius: 6px;
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 8px 12px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .log-line {
+            padding: 2px 0;
+            border-bottom: 1px solid #161b22;
+        }
+        .log-time { color: #484f58; margin-right: 8px; }
+
+        /* Performers */
+        .perf-list { font-size: 13px; }
+        .perf-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid #21262d;
+        }
+        .perf-item:last-child { border-bottom: none; }
+
+        /* Regime badge */
+        .regime-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            background: rgba(88,166,255,0.1);
+            color: #58a6ff;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #484f58;
+        }
+        .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .container { grid-template-columns: 1fr; }
+            .two-cols { grid-column: span 1; }
+            .full-width { grid-column: span 1; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>Crypto Monitor v2 - Self-Learning Dashboard</h1>
+    <div class="header-info">
+        <span>
+            <span class="status-dot status-idle" id="statusDot"></span>
+            <span id="statusText">Connecting...</span>
+        </span>
+        <span>Round: <strong id="roundNum">-</strong></span>
+        <span>Updated: <strong id="lastUpdate">-</strong></span>
+        <span>Next refresh: <strong id="countdown">-</strong>s</span>
+    </div>
+</div>
+
+<div class="container">
+
+    <!-- Market Overview -->
+    <div class="card full-width">
+        <div class="card-title">Market Overview</div>
+        <div class="stats-row" id="statsRow">
+            <div class="stat-item">
+                <div class="stat-value" id="statPerps">-</div>
+                <div class="stat-label">Total Contracts</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="statPool">-</div>
+                <div class="stat-label">Analysis Pool</div>
+            </div>
+            <div class="stat-item stat-green">
+                <div class="stat-value" id="statGainer">-</div>
+                <div class="stat-label" id="statGainerName">Top Gainer</div>
+            </div>
+            <div class="stat-item stat-red">
+                <div class="stat-value" id="statLoser">-</div>
+                <div class="stat-label" id="statLoserName">Top Loser</div>
+            </div>
+            <div class="stat-item stat-yellow">
+                <div class="stat-value" id="statValid">-</div>
+                <div class="stat-label">Valid Results</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top 3 Results -->
+    <div class="card full-width">
+        <div class="card-title">Top Recommendations</div>
+        <div id="topResults">
+            <div class="empty-state">
+                <div class="icon">...</div>
+                <div>Waiting for first scan...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Learning Stats -->
+    <div class="card two-cols">
+        <div class="card-title">Self-Learning Stats</div>
+        <div class="stats-row" style="margin-bottom:12px">
+            <div class="stat-item">
+                <div class="stat-value" id="learnPredictions">-</div>
+                <div class="stat-label">Total Predictions</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="learnValidated">-</div>
+                <div class="stat-label">Validated</div>
+            </div>
+            <div class="stat-item stat-green">
+                <div class="stat-value" id="learnRate">-</div>
+                <div class="stat-label">Overall Win Rate</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="learnPending">-</div>
+                <div class="stat-label">Pending</div>
+            </div>
+        </div>
+        <div class="learn-grid" id="stratStats">
+            <div class="learn-item">
+                <div class="learn-strat" style="color:#f85149">Short</div>
+                <div class="learn-detail" id="stratShort">-</div>
+            </div>
+            <div class="learn-item">
+                <div class="learn-strat" style="color:#3fb950">Bottom</div>
+                <div class="learn-detail" id="stratBottom">-</div>
+            </div>
+            <div class="learn-item">
+                <div class="learn-strat" style="color:#d29922">Chase</div>
+                <div class="learn-detail" id="stratChase">-</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top Performers -->
+    <div class="card">
+        <div class="card-title">Best Historical Combos</div>
+        <div class="perf-list" id="perfList">
+            <div class="empty-state" style="padding:20px">
+                <div>No data yet</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Logs -->
+    <div class="card full-width">
+        <div class="card-title">Live Logs</div>
+        <div class="log-box" id="logBox"></div>
+    </div>
+
+</div>
+
+<script>
+const REFRESH_INTERVAL = 5000; // 5s polling
+let countdownVal = 0;
+let scanInterval = 60;
+
+function fetchState() {
+    fetch('/api/state')
+        .then(r => r.json())
+        .then(data => {
+            updateUI(data);
+        })
+        .catch(err => {
+            document.getElementById('statusText').textContent = 'Connection error';
+        });
+}
+
+function updateUI(data) {
+    // Status
+    const dot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    dot.className = 'status-dot status-' + data.status;
+    const statusMap = {scanning: 'Scanning...', waiting: 'Waiting', idle: 'Idle'};
+    statusText.textContent = statusMap[data.status] || data.status;
+
+    document.getElementById('roundNum').textContent = data.round || '-';
+    document.getElementById('lastUpdate').textContent = data.last_update || '-';
+    scanInterval = data.interval || 60;
+
+    // Market stats
+    document.getElementById('statPerps').textContent = data.total_perps || '-';
+    document.getElementById('statPool').textContent = data.pool_size || '-';
+    document.getElementById('statValid').textContent = data.all_count || '-';
+
+    if (data.gainer_top) {
+        document.getElementById('statGainer').textContent = '+' + data.gainer_top.change.toFixed(1) + '%';
+        document.getElementById('statGainerName').textContent = data.gainer_top.symbol.replace('_USDT_PERP','');
+    }
+    if (data.loser_top) {
+        document.getElementById('statLoser').textContent = data.loser_top.change.toFixed(1) + '%';
+        document.getElementById('statLoserName').textContent = data.loser_top.symbol.replace('_USDT_PERP','');
+    }
+
+    // Top results
+    const container = document.getElementById('topResults');
+    if (data.top_results && data.top_results.length > 0) {
+        container.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;">' +
+            data.top_results.map((r, i) => renderResult(r, i)).join('') + '</div>';
+    }
+
+    // Learning stats
+    const ls = data.learn_stats;
+    if (ls && ls.total_predictions !== undefined) {
+        document.getElementById('learnPredictions').textContent = ls.total_predictions;
+        document.getElementById('learnValidated').textContent = ls.total_validations;
+        document.getElementById('learnRate').textContent = ls.overall_rate + '%';
+        document.getElementById('learnPending').textContent = ls.pending;
+
+        if (ls.strategy_stats) {
+            const ss = ls.strategy_stats;
+            document.getElementById('stratShort').innerHTML = formatStrat(ss['做空']);
+            document.getElementById('stratBottom').innerHTML = formatStrat(ss['抄底']);
+            document.getElementById('stratChase').innerHTML = formatStrat(ss['追多']);
+        }
+    }
+
+    // Top performers
+    const perfList = document.getElementById('perfList');
+    if (data.top_performers && data.top_performers.length > 0) {
+        perfList.innerHTML = data.top_performers.map(p =>
+            `<div class="perf-item">
+                <span>${p[0].replace('_USDT_PERP:','<br>')}</span>
+                <span><strong>${p[1]}%</strong> (${p[2]}x)</span>
+            </div>`
+        ).join('');
+    }
+
+    // Logs
+    const logBox = document.getElementById('logBox');
+    if (data.logs && data.logs.length > 0) {
+        const wasAtBottom = logBox.scrollTop + logBox.clientHeight >= logBox.scrollHeight - 20;
+        logBox.innerHTML = data.logs.map(l =>
+            `<div class="log-line"><span class="log-time">${l.time}</span>${l.msg}</div>`
+        ).join('');
+        if (wasAtBottom) logBox.scrollTop = logBox.scrollHeight;
+    }
+}
+
+function formatStrat(s) {
+    if (!s) return '-';
+    return `${s.wins}W / ${s.losses}L<br><strong>${s.rate}%</strong>`;
+}
+
+function renderResult(r, rank) {
+    const medals = ['1st', '2nd', '3rd'];
+    const medalIcons = ['&#x1F947;', '&#x1F948;', '&#x1F949;'];
+    const chgClass = r.change24h >= 0 ? 'change-up' : 'change-down';
+    const chgStr = r.change24h >= 0 ? '+' + r.change24h.toFixed(2) + '%' : r.change24h.toFixed(2) + '%';
+
+    let stratClass = 'strat-long';
+    let stratLabel = r.best_strat;
+    if (r.best_strat === '做空') stratClass = 'strat-short';
+    else if (r.best_strat === '追多') stratClass = 'strat-chase';
+
+    const obvStr = {1:'Up', '-1':'Down', 0:'Flat'}[r.obv_dir] || '?';
+
+    // Weight bars data
+    const weights = [
+        {label: 'Learn', val: r.weight, max: 2.5, color: '#58a6ff'},
+        {label: 'Regime', val: r.regime_bonus, max: 1.5, color: '#3fb950'},
+        {label: 'OBV', val: r.obv_bonus, max: 1.2, color: '#d29922'},
+        {label: 'Recent', val: r.recent_bonus, max: 1.2, color: '#bc8cff'},
+        {label: 'Conf', val: r.confidence, max: 1.5, color: '#f0883e'},
+    ];
+    const weightBars = weights.map(w => {
+        const pct = Math.min((w.val / w.max) * 100, 100);
+        return `<div class="weight-row">
+            <span class="weight-label">${w.label}</span>
+            <div class="weight-bar"><div class="weight-fill" style="width:${pct}%;background:${w.color}"></div></div>
+            <span class="weight-val">${w.val}</span>
+        </div>`;
+    }).join('');
+
+    return `<div class="result-card rank-${rank+1}">
+        <div class="result-header">
+            <div>
+                <span class="result-medal">${medalIcons[rank]}</span>
+                <span class="result-symbol">${r.symbol.replace('_USDT_PERP','')}</span>
+            </div>
+            <span class="result-change ${chgClass}">${chgStr}</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
+            <span class="strategy-badge ${stratClass}">${stratLabel}</span>
+            <span class="signal-badge signal-${r.signal_strength}">${r.signal_strength}</span>
+            <span class="regime-badge">${r.regime}</span>
+            <span style="margin-left:auto;font-size:13px;color:#58a6ff;font-weight:700">Score: ${r.best_score}</span>
+        </div>
+        <div class="result-grid">
+            <span class="label">Price</span><span class="value">${r.price}</span>
+            <span class="label">RSI</span><span class="value">${r.rsi}</span>
+            <span class="label">MFI</span><span class="value">${r.mfi}</span>
+            <span class="label">BB</span><span class="value">${r.bb_pos}</span>
+            <span class="label">OBV</span><span class="value">${obvStr}</span>
+            <span class="label">Win Rate</span><span class="value">${r.best_rate}% (${r.best_total}x)</span>
+        </div>
+        <div class="weight-bar-container">${weightBars}</div>
+        <div style="font-size:11px;color:#8b949e;margin:8px 0 6px">${r.detail}</div>
+        <div class="entry-exit">
+            <div><div class="ee-label">Entry</div><div class="ee-value">${r.price}</div></div>
+            <div><div class="ee-label">TP (+${r.tp_pct}%)</div><div class="ee-value ee-tp">${r.tp}</div></div>
+            <div><div class="ee-label">SL (-${r.sl_pct}%)</div><div class="ee-value ee-sl">${r.sl}</div></div>
+            <div><div class="ee-label">R:R</div><div class="ee-value ee-rr">1:${r.rr}</div></div>
+        </div>
+    </div>`;
+}
+
+// Countdown
+setInterval(() => {
+    const el = document.getElementById('countdown');
+    if (countdownVal > 0) {
+        countdownVal--;
+        el.textContent = countdownVal;
+    }
+}, 1000);
+
+// Polling
+function poll() {
+    fetchState();
+    countdownVal = Math.round(REFRESH_INTERVAL / 1000);
+    setTimeout(poll, REFRESH_INTERVAL);
+}
+poll();
+</script>
+</body>
+</html>
