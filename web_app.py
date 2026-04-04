@@ -132,8 +132,6 @@ def run_trading_bot(initial_balance=100):
     add_trading_log("等待 45 秒後開始掃描（避免 API 限流）...")
     time.sleep(45)
     round_num = 0
-    # 記錄上一輪每個幣種的最佳策略，用於一致性檢查
-    prev_strat = {}  # {symbol: best_strat}
 
     while True:
         round_num += 1
@@ -217,21 +215,12 @@ def run_trading_bot(initial_balance=100):
 
         results.sort(key=lambda x: x["best_score"], reverse=True)
 
-        # 記錄本輪策略，用於下輪一致性檢查
-        current_strat = {r["symbol"]: r["best_strat"] for r in results}
-
         # 嘗試開倉
         opened = 0
         for r in results[:TOP_N]:
             sym_short = r['symbol'].replace('_USDT_PERP', '')
 
-            # 安全過濾 1：策略方向必須連續 2 輪一致
-            prev = prev_strat.get(r["symbol"])
-            if prev is None or prev != r["best_strat"]:
-                add_trading_log(f"{sym_short}: SKIP (策略不一致，上輪:{prev or '無'} 本輪:{r['best_strat']}，需連續2輪)")
-                continue
-
-            # 安全過濾 2：24h 跌幅超過 15% 不做追多
+            # 安全過濾：24h 跌幅超過 15% 不做追多
             if r["best_strat"] in ("追多", "抄底") and r.get("change24h", 0) < -15:
                 add_trading_log(f"{sym_short}: SKIP (24h跌{r['change24h']:.1f}%，暴跌中不做多)")
                 continue
@@ -284,8 +273,6 @@ def run_trading_bot(initial_balance=100):
         if opened > 0:
             add_trading_log(f"本輪開倉 {opened} 筆")
 
-        # 更新上輪策略記錄
-        prev_strat = current_strat
 
         _update_trading_state(risk_mgr)
         save_trade_log(risk_mgr)

@@ -283,7 +283,6 @@ LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learni
 def run_trading_loop(client, risk_mgr, learner):
     """主交易循環"""
     round_num = 0
-    prev_strat = {}  # 記錄上一輪策略，用於一致性檢查
 
     while True:
         round_num += 1
@@ -381,21 +380,12 @@ def run_trading_loop(client, risk_mgr, learner):
 
         results.sort(key=lambda x: x["best_score"], reverse=True)
 
-        # 記錄本輪策略
-        current_strat = {r["symbol"]: r["best_strat"] for r in results}
-
         # 嘗試開倉（只取最好的幾個）
         opened = 0
         for r in results[:TOP_N]:
             sym_short = r['symbol'].replace('_USDT_PERP', '')
 
-            # 安全過濾 1：策略方向必須連續 2 輪一致
-            prev = prev_strat.get(r["symbol"])
-            if prev is None or prev != r["best_strat"]:
-                print(f"  {sym_short}: SKIP (策略不一致，上輪:{prev or '無'} 本輪:{r['best_strat']})")
-                continue
-
-            # 安全過濾 2：24h 跌幅超過 15% 不做追多
+            # 安全過濾：24h 跌幅超過 15% 不做追多
             if r["best_strat"] in ("追多", "抄底") and r.get("change24h", 0) < -15:
                 print(f"  {sym_short}: SKIP (24h跌{r['change24h']:.1f}%，暴跌中不做多)")
                 continue
@@ -461,9 +451,6 @@ def run_trading_loop(client, risk_mgr, learner):
 
         if opened > 0:
             print(color(f"\n[INFO] 本輪開倉 {opened} 筆", 'green'))
-
-        # 更新上輪策略記錄
-        prev_strat = current_strat
 
         # 儲存
         save_trade_log(risk_mgr)
