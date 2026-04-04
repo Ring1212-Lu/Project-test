@@ -984,6 +984,12 @@ function updateBotUI(data) {
         badge.style.color = '#d29922';
     }
 
+    if (s.tightened && !s.halted) {
+        badge.textContent = '收緊中 (門檻:' + s.min_score + ')';
+        badge.style.background = 'rgba(210,153,34,0.15)';
+        badge.style.color = '#d29922';
+    }
+
     if (s.halted) {
         badge.textContent = '已停機';
         badge.style.background = 'rgba(248,81,73,0.15)';

@@ -112,15 +112,17 @@ class RiskManager:
         if len(self.open_positions) >= self.max_positions:
             return False, f"持倉數已達上限 {self.max_positions}"
 
-        # 信號品質檢查
+        # 信號品質檢查（連虧時自動收緊門檻）
+        dynamic_min_score = self._get_dynamic_min_score()
+
         strength = signal.get("signal_strength", "WEAK")
         strength_order = {"STRONG": 3, "MEDIUM": 2, "WEAK": 1}
         min_order = strength_order.get(self.min_signal_strength, 3)
         if strength_order.get(strength, 0) < min_order:
             return False, f"信號強度 {strength} 不足（需要 {self.min_signal_strength}）"
 
-        if signal.get("best_score", 0) < self.min_score:
-            return False, f"分數 {signal['best_score']} < {self.min_score}"
+        if signal.get("best_score", 0) < dynamic_min_score:
+            return False, f"分數 {signal['best_score']} < {dynamic_min_score}{'（收緊中）' if dynamic_min_score > self.min_score else ''}"
 
         if signal.get("best_rate", 0) < self.min_win_rate:
             return False, f"勝率 {signal['best_rate']}% < {self.min_win_rate}%"
@@ -129,6 +131,19 @@ class RiskManager:
             return False, f"風報比 {signal['rr']} < {self.min_rr}"
 
         return True, "OK"
+
+    def _get_dynamic_min_score(self):
+        """根據近期勝率動態調整最低分數門檻"""
+        recent = self.closed_trades[-5:]  # 最近 5 筆
+        if len(recent) < 3:
+            return self.min_score  # 交易不夠多，用預設值
+
+        wins = sum(1 for t in recent if t.get("pnl", 0) > 0)
+        recent_wr = wins / len(recent)
+
+        if recent_wr < 0.4:  # 近期勝率 < 40%，收緊門檻
+            return 80
+        return self.min_score  # 正常門檻
 
     def calc_position_size(self, signal):
         """計算開倉大小（基於 Kelly 和風控限制）"""
@@ -165,6 +180,9 @@ class RiskManager:
         total = len(self.closed_trades)
         wr = round(wins / total * 100, 1) if total > 0 else 0
 
+        dynamic_score = self._get_dynamic_min_score()
+        tightened = dynamic_score > self.min_score
+
         return {
             "balance": round(self.current_balance, 2),
             "daily_pnl": round(self.daily_pnl, 2),
@@ -177,6 +195,8 @@ class RiskManager:
             "consecutive_losses": self.consecutive_losses,
             "halted": self.halted,
             "halt_reason": self.halt_reason,
+            "tightened": tightened,
+            "min_score": dynamic_score,
         }
 
 
