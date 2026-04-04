@@ -407,8 +407,11 @@ def fetch_and_analyze(coin, learner, opt_params=None, btc_trend=0):
         return None
     # 多時間框架確認
     htf_trend = get_higher_tf_trend(sym)
+    # 使用 ticker 即時價格（比 K 線收盤價更即時）
+    realtime_price = coin.get("price", None)
     return analyze(sym, klines, round(coin["change"], 2), learner, opt_params,
-                   btc_trend=btc_trend, htf_trend=htf_trend)
+                   btc_trend=btc_trend, htf_trend=htf_trend,
+                   realtime_price=realtime_price)
 
 
 # ============================================================
@@ -416,7 +419,7 @@ def fetch_and_analyze(coin, learner, opt_params=None, btc_trend=0):
 # ============================================================
 
 def analyze(symbol, klines, change24h, learner, opt_params=None,
-            btc_trend=0, htf_trend=0):
+            btc_trend=0, htf_trend=0, realtime_price=None):
     closes = [float(k['close']) for k in klines if float(k.get('close', 0)) > 0]
     if len(closes) < 60:
         return None
@@ -625,7 +628,8 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
     best_strat = max(valid, key=lambda k: valid[k]["score"])
     best = valid[best_strat]
 
-    current_price = closes[-1]
+    # 優先使用 ticker 即時價格，K 線收盤價作為備用
+    current_price = realtime_price if realtime_price else closes[-1]
     current_rsi   = rsi_vals[-1] if rsi_vals else 50
     current_mfi   = mfi_vals[-1] if mfi_vals else 50
 
