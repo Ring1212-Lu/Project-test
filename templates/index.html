@@ -274,6 +274,63 @@
         }
         .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
 
+        /* Backtest results */
+        .bt-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 12px;
+        }
+        .bt-strat-card {
+            background: #0d1117;
+            border: 1px solid #21262d;
+            border-radius: 8px;
+            padding: 14px;
+        }
+        .bt-strat-card.bt-best {
+            border-color: #3fb950;
+            box-shadow: 0 0 8px rgba(63,185,80,0.15);
+        }
+        .bt-strat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .bt-strat-name {
+            font-size: 15px;
+            font-weight: 700;
+        }
+        .bt-best-tag {
+            font-size: 10px;
+            background: rgba(63,185,80,0.2);
+            color: #3fb950;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .bt-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 12px;
+            font-size: 12px;
+        }
+        .bt-metrics .bt-label { color: #8b949e; }
+        .bt-metrics .bt-val { text-align: right; font-weight: 600; }
+        .bt-regime-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+        .bt-regime-tag {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: rgba(88,166,255,0.08);
+            color: #8b949e;
+        }
+
         /* Trading bot tables */
         .bot-table {
             width: 100%;
@@ -371,6 +428,22 @@
                 <div>Waiting for first scan...</div>
             </div>
         </div>
+    </div>
+
+    <!-- Single Coin Backtest -->
+    <div class="card full-width">
+        <div class="card-title">Single Coin Backtest</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+            <input id="btSymbolInput" type="text" placeholder="e.g. BTC, ETH, SOL, DOGE"
+                   style="flex:1;min-width:180px;max-width:300px;padding:8px 12px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e0e6ed;font-size:14px"
+                   onkeydown="if(event.key==='Enter')runBacktest()">
+            <button onclick="runBacktest()" id="btRunBtn"
+                    style="padding:8px 20px;border-radius:6px;border:none;background:#1f6feb;color:#fff;font-weight:600;cursor:pointer;font-size:13px">
+                Run Backtest
+            </button>
+            <span id="btStatus" style="font-size:12px;color:#8b949e"></span>
+        </div>
+        <div id="btResults"></div>
     </div>
 
     <!-- Learning Stats -->
@@ -643,6 +716,172 @@ function renderResult(r, rank) {
             <div><div class="ee-label">R:R</div><div class="ee-value ee-rr">1:${r.rr}</div></div>
         </div>
     </div>`;
+}
+
+// ===== Single Coin Backtest =====
+function runBacktest() {
+    let sym = document.getElementById('btSymbolInput').value.trim().toUpperCase();
+    if (!sym) return;
+
+    // Auto-complete symbol format
+    if (!sym.includes('_')) {
+        sym = sym + '_USDT_PERP';
+    } else if (!sym.endsWith('_PERP')) {
+        sym = sym + '_PERP';
+    }
+
+    const btn = document.getElementById('btRunBtn');
+    const status = document.getElementById('btStatus');
+    const container = document.getElementById('btResults');
+
+    btn.disabled = true;
+    btn.textContent = 'Analyzing...';
+    status.textContent = `Backtesting ${sym} ...`;
+    container.innerHTML = '<div class="empty-state" style="padding:20px"><div>Loading data & running backtest...</div></div>';
+
+    fetch('/api/backtest/' + sym)
+        .then(r => {
+            if (!r.ok) throw new Error(r.status === 404 ? 'No data or insufficient trades' : 'Request failed');
+            return r.json();
+        })
+        .then(data => {
+            btn.disabled = false;
+            btn.textContent = 'Run Backtest';
+            status.textContent = '';
+            renderBacktestResults(data, container);
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.textContent = 'Run Backtest';
+            status.textContent = '';
+            container.innerHTML = `<div class="empty-state" style="padding:20px;color:#f85149">${err.message}<br><span style="font-size:11px;color:#8b949e">Make sure the symbol exists (e.g. BTC, ETH, SOL)</span></div>`;
+        });
+}
+
+function renderBacktestResults(data, container) {
+    const results = data.results;
+    const symbol = data.symbol || '';
+    const displayName = symbol.replace('_USDT_PERP', '');
+
+    // Find the best strategy across all hold periods (by expectancy)
+    let bestKey = null;
+    let bestExpectancy = -Infinity;
+
+    for (const [hp, strats] of Object.entries(results)) {
+        for (const [strat, r] of Object.entries(strats)) {
+            if (r && r.expectancy > bestExpectancy && r.total >= 3) {
+                bestExpectancy = r.expectancy;
+                bestKey = hp + '|' + strat;
+            }
+        }
+    }
+
+    // Collect all hold-period results, find the "best" hold period (highest avg expectancy)
+    const holdPeriods = Object.keys(results).sort((a, b) => parseInt(a) - parseInt(b));
+    let bestHP = holdPeriods[0];
+    let bestHPScore = -Infinity;
+    holdPeriods.forEach(hp => {
+        let score = 0, cnt = 0;
+        for (const [strat, r] of Object.entries(results[hp])) {
+            if (r && r.total >= 3) { score += r.expectancy; cnt++; }
+        }
+        if (cnt > 0 && score / cnt > bestHPScore) {
+            bestHPScore = score / cnt;
+            bestHP = hp;
+        }
+    });
+
+    // Build HP tabs
+    let tabsHTML = '<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">';
+    holdPeriods.forEach(hp => {
+        const active = hp === bestHP;
+        tabsHTML += `<button class="bt-hp-tab" data-hp="${hp}" onclick="switchHP('${hp}')"
+            style="padding:5px 14px;border-radius:6px;border:1px solid ${active ? '#58a6ff' : '#30363d'};
+            background:${active ? 'rgba(88,166,255,0.1)' : '#0d1117'};
+            color:${active ? '#58a6ff' : '#8b949e'};font-size:12px;cursor:pointer;font-weight:${active ? '600' : '400'}">
+            Hold ${hp} bars</button>`;
+    });
+    tabsHTML += '</div>';
+
+    // Build cards for each hold period
+    let cardsHTML = '';
+    holdPeriods.forEach(hp => {
+        const strats = results[hp];
+        const display = hp === bestHP ? '' : 'none';
+        cardsHTML += `<div class="bt-hp-content" data-hp="${hp}" style="display:${display}">`;
+        cardsHTML += `<div class="bt-summary">`;
+
+        const stratOrder = ['做空', '抄底', '追多'];
+        const stratColors = {'做空': '#f85149', '抄底': '#3fb950', '追多': '#d29922'};
+        const stratLabels = {'做空': 'Short', '抄底': 'Bottom Fish', '追多': 'Chase Long'};
+
+        stratOrder.forEach(strat => {
+            const r = strats[strat];
+            if (!r) {
+                cardsHTML += `<div class="bt-strat-card">
+                    <div class="bt-strat-header">
+                        <span class="bt-strat-name" style="color:${stratColors[strat]}">${stratLabels[strat]} (${strat})</span>
+                    </div>
+                    <div style="color:#484f58;font-size:12px;text-align:center;padding:16px">No signals found</div>
+                </div>`;
+                return;
+            }
+
+            const isBest = (hp + '|' + strat) === bestKey;
+            const wrColor = r.win_rate >= 55 ? '#3fb950' : r.win_rate >= 45 ? '#d29922' : '#f85149';
+            const expColor = r.expectancy >= 0 ? '#3fb950' : '#f85149';
+
+            // Regime breakdown
+            let regimeHTML = '';
+            if (r.regime_stats) {
+                for (const [regime, rs] of Object.entries(r.regime_stats)) {
+                    regimeHTML += `<span class="bt-regime-tag">${regime}: ${rs.win_rate}% (${rs.total})</span>`;
+                }
+            }
+
+            cardsHTML += `<div class="bt-strat-card ${isBest ? 'bt-best' : ''}">
+                <div class="bt-strat-header">
+                    <span class="bt-strat-name" style="color:${stratColors[strat]}">${stratLabels[strat]} (${strat})</span>
+                    ${isBest ? '<span class="bt-best-tag">Best Strategy</span>' : ''}
+                </div>
+                <div class="bt-metrics">
+                    <span class="bt-label">Win Rate</span><span class="bt-val" style="color:${wrColor}">${r.win_rate}%</span>
+                    <span class="bt-label">Trades</span><span class="bt-val">${r.total} (${r.wins}W / ${r.losses}L)</span>
+                    <span class="bt-label">Avg PnL</span><span class="bt-val" style="color:${r.avg_pnl >= 0 ? '#3fb950' : '#f85149'}">${r.avg_pnl >= 0 ? '+' : ''}${r.avg_pnl}%</span>
+                    <span class="bt-label">Expectancy</span><span class="bt-val" style="color:${expColor}">${r.expectancy >= 0 ? '+' : ''}${r.expectancy}%</span>
+                    <span class="bt-label">Avg Win</span><span class="bt-val" style="color:#3fb950">+${r.avg_win}%</span>
+                    <span class="bt-label">Avg Loss</span><span class="bt-val" style="color:#f85149">${r.avg_loss}%</span>
+                    <span class="bt-label">Sharpe</span><span class="bt-val">${r.sharpe}</span>
+                    <span class="bt-label">Max Drawdown</span><span class="bt-val" style="color:#f85149">${r.max_drawdown}%</span>
+                    <span class="bt-label">Max ConsLoss</span><span class="bt-val">${r.max_consecutive_loss}</span>
+                </div>
+                ${regimeHTML ? '<div class="bt-regime-row">' + regimeHTML + '</div>' : ''}
+            </div>`;
+        });
+
+        cardsHTML += '</div></div>';
+    });
+
+    container.innerHTML = `
+        <div style="font-size:16px;font-weight:700;color:#58a6ff;margin-bottom:12px">${displayName} Backtest Results</div>
+        ${tabsHTML}
+        ${cardsHTML}
+    `;
+}
+
+function switchHP(hp) {
+    // Update tabs
+    document.querySelectorAll('.bt-hp-tab').forEach(tab => {
+        const active = tab.dataset.hp === hp;
+        tab.style.borderColor = active ? '#58a6ff' : '#30363d';
+        tab.style.background = active ? 'rgba(88,166,255,0.1)' : '#0d1117';
+        tab.style.color = active ? '#58a6ff' : '#8b949e';
+        tab.style.fontWeight = active ? '600' : '400';
+    });
+    // Update content
+    document.querySelectorAll('.bt-hp-content').forEach(el => {
+        el.style.display = el.dataset.hp === hp ? '' : 'none';
+    });
 }
 
 // ===== Trading Bot =====
