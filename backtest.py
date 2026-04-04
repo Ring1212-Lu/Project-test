@@ -32,6 +32,7 @@ from crypto_monitor_v2 import (
     calc_rsi_wilder, calc_mfi_optimized, calc_macd_hist,
     calc_atr, calc_bollinger, calc_obv, obv_trend,
     BASE_URL, TICK_URL,
+    _pionex_to_binance_symbol, _binance_to_pionex_symbol,
 )
 from learning_engine import MarketRegime
 
@@ -39,7 +40,10 @@ from learning_engine import MarketRegime
 # ===== Session =====
 def _create_session():
     session = requests.Session()
-    retry = Retry(total=3, backoff_factor=0.5, allowed_methods=["GET"])
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    })
+    retry = Retry(total=3, backoff_factor=1, allowed_methods=["GET"])
     adapter = HTTPAdapter(max_retries=retry, pool_connections=5, pool_maxsize=5)
     session.mount("https://", adapter)
     return session
@@ -48,15 +52,22 @@ _session = _create_session()
 
 
 def fetch_klines_backtest(symbol, limit=300):
-    """抓取較長歷史 K 線用於回測"""
+    """從幣安合約 API 抓取較長歷史 K 線用於回測"""
+    binance_sym = _pionex_to_binance_symbol(symbol)
     try:
         r = _session.get(BASE_URL, params={
-            "symbol": symbol, "interval": "1M", "limit": limit
+            "symbol": binance_sym, "interval": "1m", "limit": limit
         }, timeout=15)
         if r.status_code == 200:
-            kl = r.json().get("data", {}).get("klines", [])
-            if isinstance(kl, list) and len(kl) >= 100:
-                return kl
+            raw = r.json()
+            if isinstance(raw, list) and len(raw) >= 100:
+                klines = []
+                for k in raw:
+                    klines.append({
+                        "open": k[1], "high": k[2], "low": k[3],
+                        "close": k[4], "volume": k[5],
+                    })
+                return klines
     except Exception as e:
         print(f"  [WARN] {symbol}: {type(e).__name__}")
     return []
@@ -65,18 +76,18 @@ def fetch_klines_backtest(symbol, limit=300):
 def get_top_symbols(n=20):
     """取得成交量前 N 的永續合約"""
     try:
-        r = _session.get(TICK_URL, params={"type": "PERP"}, timeout=15)
+        r = _session.get(TICK_URL, timeout=15)
         if r.status_code == 200:
-            tickers = r.json().get("data", {}).get("tickers", [])
+            data = r.json()
             perps = []
-            for t in tickers:
+            for t in data:
                 sym = t.get("symbol", "")
-                if not sym.endswith("_USDT_PERP"):
+                if not sym.endswith("USDT"):
                     continue
                 try:
-                    vol = float(t.get("amount", 0))
+                    vol = float(t.get("quoteVolume", 0))
                     if vol > 10000:
-                        perps.append({"symbol": sym, "volume": vol})
+                        perps.append({"symbol": _binance_to_pionex_symbol(sym), "volume": vol})
                 except (ValueError, TypeError):
                     continue
             perps.sort(key=lambda x: x["volume"], reverse=True)

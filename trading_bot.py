@@ -206,17 +206,18 @@ def check_positions(risk_mgr, client):
     if not risk_mgr.open_positions:
         return
 
-    # 取得當前價格
-    from crypto_monitor_v2 import _session, TICK_URL
+    # 取得當前價格（從幣安合約 API）
+    from crypto_monitor_v2 import _throttled_get, TICK_URL, _binance_to_pionex_symbol
     try:
-        r = _session.get(TICK_URL, params={"type": "PERP"}, timeout=10)
+        r = _throttled_get(TICK_URL, timeout=10)
         if r.status_code != 200:
             return
-        tickers = r.json().get("data", {}).get("tickers", [])
+        data = r.json()
         prices = {}
-        for t in tickers:
+        for t in data:
+            sym = _binance_to_pionex_symbol(t.get("symbol", ""))
             try:
-                prices[t["symbol"]] = float(t["close"])
+                prices[sym] = float(t["lastPrice"])
             except (KeyError, ValueError):
                 pass
     except Exception:

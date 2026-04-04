@@ -42,14 +42,15 @@ except ImportError:
         return text
 
 # ===== 全域設定 =====
-BASE_URL   = "https://api.pionex.com/api/v1/market/klines"
-TICK_URL   = "https://api.pionex.com/api/v1/market/tickers"
-INTERVAL   = 180       # 秒，每輪間隔（3分鐘，避免 API 限流）
+# 幣安合約 API（比派網限流寬鬆，價格幾乎一致）
+BASE_URL   = "https://fapi.binance.com/fapi/v1/klines"
+TICK_URL   = "https://fapi.binance.com/fapi/v1/ticker/24hr"
+INTERVAL   = 120       # 秒，每輪間隔（2分鐘）
 TOP_N      = 3         # 最終回報前幾名
 MIN_SIG    = 3         # 最低訊號次數門檻
-TOP15_PCT  = 0.08      # 每側（漲/跌）取百分比
-TOP15_MAX  = 6         # 每側最多取幾個（減少 API 呼叫）
-MAX_WORKERS = 2        # 並行執行緒數（降低避免 429）
+TOP15_PCT  = 0.10      # 每側（漲/跌）取百分比
+TOP15_MAX  = 8         # 每側最多取幾個
+MAX_WORKERS = 3        # 並行執行緒數
 MAX_RETRIES = 3        # API 請求重試次數
 
 # ATR 倍數（自適應止盈止損）
@@ -300,11 +301,36 @@ def calc_support_resistance(closes, lookback=50):
 #  資料擷取
 # ============================================================
 
+def _binance_to_pionex_symbol(binance_sym):
+    """幣安格式轉派網格式：BTCUSDT -> BTC_USDT_PERP"""
+    if binance_sym.endswith("USDT"):
+        base = binance_sym[:-4]
+        return f"{base}_USDT_PERP"
+    return binance_sym
+
+def _pionex_to_binance_symbol(pionex_sym):
+    """派網格式轉幣安格式：BTC_USDT_PERP -> BTCUSDT"""
+    return pionex_sym.replace("_USDT_PERP", "USDT").replace("_", "")
+
+
 def fetch_tickers():
+    """從幣安合約 API 抓取行情，轉換成相容格式"""
     try:
-        r = _throttled_get(TICK_URL, params={"type": "PERP"}, timeout=15)
+        r = _throttled_get(TICK_URL, timeout=15)
         if r.status_code == 200:
-            return r.json().get("data", {}).get("tickers", [])
+            data = r.json()
+            tickers = []
+            for t in data:
+                sym = t.get("symbol", "")
+                if not sym.endswith("USDT"):
+                    continue
+                tickers.append({
+                    "symbol": _binance_to_pionex_symbol(sym),
+                    "open": t.get("openPrice", "0"),
+                    "close": t.get("lastPrice", "0"),
+                    "amount": t.get("quoteVolume", "0"),  # USDT 成交額
+                })
+            return tickers
     except Exception as e:
         print(f"  [ERROR] 行情抓取失敗: {type(e).__name__}: {e}")
     return []
@@ -338,7 +364,7 @@ _session = _create_session()
 import threading
 _api_lock = threading.Lock()
 _last_api_call = 0
-API_THROTTLE = 1.0  # 秒（加大間隔避免 429）
+API_THROTTLE = 0.2  # 秒（幣安限流寬鬆，0.2秒即可）
 
 def _throttled_get(url, **kwargs):
     """帶節流的 GET 請求，遇到 429 自動等待重試"""
@@ -363,14 +389,31 @@ def _throttled_get(url, **kwargs):
 
 
 def fetch_klines(symbol, interval="1M", limit=120):
+    """從幣安合約 API 抓取 K 線，轉換成相容格式"""
+    # 轉換符號格式
+    binance_sym = _pionex_to_binance_symbol(symbol)
+    # 轉換時間框架格式：1M -> 1m, 5M -> 5m
+    binance_interval = interval.lower()
+
     try:
         r = _throttled_get(BASE_URL, params={
-            "symbol": symbol, "interval": interval, "limit": limit
+            "symbol": binance_sym, "interval": binance_interval, "limit": limit
         }, timeout=15)
         if r.status_code == 200:
-            kl = r.json().get("data", {}).get("klines", [])
-            if isinstance(kl, list) and len(kl) >= 30:
-                return kl
+            raw = r.json()
+            if isinstance(raw, list) and len(raw) >= 30:
+                # 幣安格式: [time, open, high, low, close, volume, ...]
+                # 轉成派網相容格式: {"open":, "close":, "high":, "low":, "volume":}
+                klines = []
+                for k in raw:
+                    klines.append({
+                        "open": k[1],
+                        "high": k[2],
+                        "low": k[3],
+                        "close": k[4],
+                        "volume": k[5],
+                    })
+                return klines
     except Exception as e:
         print(f"    [WARN] {symbol}: {type(e).__name__}")
     return []
