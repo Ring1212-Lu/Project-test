@@ -44,12 +44,12 @@ except ImportError:
 # ===== 全域設定 =====
 BASE_URL   = "https://api.pionex.com/api/v1/market/klines"
 TICK_URL   = "https://api.pionex.com/api/v1/market/tickers"
-INTERVAL   = 60        # 秒，每輪間隔
+INTERVAL   = 90        # 秒，每輪間隔（避免 API 限流）
 TOP_N      = 3         # 最終回報前幾名
 MIN_SIG    = 3         # 最低訊號次數門檻
 TOP15_PCT  = 0.10      # 每側（漲/跌）取百分比
 TOP15_MAX  = 10        # 每側最多取幾個
-MAX_WORKERS = 3        # 並行執行緒數（太多會被 API 擋）
+MAX_WORKERS = 2        # 並行執行緒數（降低避免 429）
 MAX_RETRIES = 3        # API 請求重試次數
 
 # ATR 倍數（自適應止盈止損）
@@ -302,7 +302,7 @@ def calc_support_resistance(closes, lookback=50):
 
 def fetch_tickers():
     try:
-        r = _session.get(TICK_URL, params={"type": "PERP"}, timeout=15)
+        r = _throttled_get(TICK_URL, params={"type": "PERP"}, timeout=15)
         if r.status_code == 200:
             return r.json().get("data", {}).get("tickers", [])
     except Exception as e:
@@ -317,11 +317,11 @@ def _create_session():
     session = requests.Session()
     retry = Retry(
         total=MAX_RETRIES,
-        backoff_factor=0.5,       # 0.5s, 1s, 2s
+        backoff_factor=2,         # 2s, 4s, 8s（429 時等更久再重試）
         status_forcelist=[429, 500, 502, 503, 504],
         allowed_methods=["GET"],
     )
-    adapter = HTTPAdapter(max_retries=retry, pool_connections=5, pool_maxsize=5)
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=3, pool_maxsize=3)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     return session
@@ -330,10 +330,27 @@ def _create_session():
 # 全域 Session（連線池復用，避免反覆握手）
 _session = _create_session()
 
+# API 請求節流：每次請求間隔至少 0.3 秒
+import threading
+_api_lock = threading.Lock()
+_last_api_call = 0
+API_THROTTLE = 0.3  # 秒
+
+def _throttled_get(url, **kwargs):
+    """帶節流的 GET 請求，避免觸發 429"""
+    global _last_api_call
+    with _api_lock:
+        now = time.time()
+        wait = API_THROTTLE - (now - _last_api_call)
+        if wait > 0:
+            time.sleep(wait)
+        _last_api_call = time.time()
+    return _session.get(url, **kwargs)
+
 
 def fetch_klines(symbol, interval="1M", limit=120):
     try:
-        r = _session.get(BASE_URL, params={
+        r = _throttled_get(BASE_URL, params={
             "symbol": symbol, "interval": interval, "limit": limit
         }, timeout=15)
         if r.status_code == 200:

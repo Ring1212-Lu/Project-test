@@ -29,6 +29,24 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LEARNING_FILE = os.path.join(BASE_DIR, "learning_data.json")
 TRADE_LOG_FILE = os.path.join(BASE_DIR, "trade_log.json")
 
+# 共享 ticker 快取（監控和機器人共用，減少 API 呼叫）
+_ticker_cache = {"data": [], "time": 0}
+_ticker_cache_lock = threading.Lock()
+TICKER_CACHE_TTL = 30  # 快取 30 秒
+
+def get_shared_tickers():
+    """取得共享的 ticker 資料，避免重複呼叫 API"""
+    with _ticker_cache_lock:
+        now = time.time()
+        if now - _ticker_cache["time"] < TICKER_CACHE_TTL and _ticker_cache["data"]:
+            return _ticker_cache["data"]
+    # 快取過期，重新抓
+    tickers = fetch_tickers()
+    with _ticker_cache_lock:
+        _ticker_cache["data"] = tickers
+        _ticker_cache["time"] = time.time()
+    return tickers
+
 # 全域狀態
 state = {
     "round": 0,
@@ -110,6 +128,9 @@ def run_trading_bot(initial_balance=100):
         trading_state["enabled"] = True
 
     add_trading_log(f"機器人啟動 | 初始資金: {initial_balance}U (模擬模式)")
+    # 等待 45 秒再開始，錯開與監控掃描的 API 呼叫
+    add_trading_log("等待 45 秒後開始掃描（避免 API 限流）...")
+    time.sleep(45)
     round_num = 0
     # 記錄上一輪每個幣種的最佳策略，用於一致性檢查
     prev_strat = {}  # {symbol: best_strat}
@@ -134,8 +155,8 @@ def run_trading_bot(initial_balance=100):
         btc_str = {1: "UP", -1: "DOWN", 0: "NEUTRAL"}.get(btc_trend, "?")
         add_trading_log(f"BTC 趨勢: {btc_str}")
 
-        # 抓行情
-        tickers = fetch_tickers()
+        # 抓行情（使用共享快取，減少 API 呼叫）
+        tickers = get_shared_tickers()
         perps = []
         for t in tickers:
             sym = t.get("symbol", "")
@@ -308,7 +329,7 @@ def run_background_scan():
 
         # 抓行情
         add_log("正在抓取全市場行情...")
-        tickers = fetch_tickers()
+        tickers = get_shared_tickers()
         perps = []
         for t in tickers:
             sym = t.get("symbol", "")
