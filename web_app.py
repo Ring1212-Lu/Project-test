@@ -306,30 +306,35 @@ def _update_trading_state(risk_mgr):
         trading_state["closed_trades"] = list(risk_mgr.closed_trades[-50:])
 
 
+# 監控掃描控制
+scan_should_restart = threading.Event()
+
 def run_background_scan():
-    """背景掃描執行緒"""
+    """背景掃描執行緒（帶錯誤保護）"""
     learner = LearningEngine(LEARNING_FILE)
     round_num = 0
+    consecutive_errors = 0
 
     while True:
-        round_num += 1
-        with state_lock:
-            state["round"] = round_num
-            state["status"] = "scanning"
+        try:
+            round_num += 1
+            with state_lock:
+                state["round"] = round_num
+                state["status"] = "scanning"
 
-        add_log(f"=== 第 {round_num} 輪掃描開始 ===")
+            add_log(f"=== 第 {round_num} 輪掃描開始 ===")
 
-        # 驗證歷史預測
-        validated = learner.validate_pending_predictions()
-        if validated > 0:
-            add_log(f"驗證了 {validated} 筆歷史預測，權重已更新")
+            # 驗證歷史預測
+            validated = learner.validate_pending_predictions()
+            if validated > 0:
+                add_log(f"驗證了 {validated} 筆歷史預測，權重已更新")
 
-        if round_num % 50 == 0:
-            learner.cleanup_stale_weights()
+            if round_num % 50 == 0:
+                learner.cleanup_stale_weights()
 
-        # 抓行情
-        add_log("正在抓取全市場行情...")
-        tickers = get_shared_tickers()
+            # 抓行情
+            add_log("正在抓取全市場行情...")
+            tickers = get_shared_tickers()
         perps = []
         for t in tickers:
             sym = t.get("symbol", "")
@@ -450,7 +455,25 @@ def run_background_scan():
             }
             state["top_performers"] = learner.get_top_performers(5)
 
-        add_log(f"第 {round_num} 輪完成，共 {len(results)} 個有效幣種，前 {len(top)} 名已更新")
+            add_log(f"第 {round_num} 輪完成，共 {len(results)} 個有效幣種，前 {len(top)} 名已更新")
+            consecutive_errors = 0  # 重置錯誤計數
+
+        except Exception as e:
+            consecutive_errors += 1
+            err_msg = f"掃描出錯: {type(e).__name__}: {e}"
+            add_log(f"[ERROR] {err_msg}")
+
+            if consecutive_errors >= 3:
+                add_log(f"[ERROR] 連續 {consecutive_errors} 次錯誤，監控暫停。請點擊「重新啟動監控」按鈕。")
+                with state_lock:
+                    state["status"] = "error"
+                # 等待手動重啟信號
+                scan_should_restart.clear()
+                scan_should_restart.wait()  # 阻塞直到按下重啟按鈕
+                add_log("收到重啟信號，監控恢復！")
+                consecutive_errors = 0
+                continue
+
         time.sleep(INTERVAL)
 
 
@@ -610,6 +633,16 @@ def api_trading_reset():
             _update_trading_state(trading_risk_mgr)
             return jsonify({"result": True, "msg": "Bot reset, resuming trading"})
     return jsonify({"error": "No risk manager found"}), 500
+
+
+@app.route("/api/scan/restart", methods=["POST"])
+def api_scan_restart():
+    """手動重啟監控掃描"""
+    with state_lock:
+        current = state["status"]
+    scan_should_restart.set()
+    add_log("收到手動重啟指令")
+    return jsonify({"result": True, "msg": "Scan restart signal sent", "prev_status": current})
 
 
 if __name__ == "__main__":

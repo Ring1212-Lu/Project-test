@@ -45,6 +45,7 @@
         .status-scanning { background: #f0883e; animation: pulse 1s infinite; }
         .status-waiting { background: #3fb950; }
         .status-idle { background: #8b949e; }
+        .status-error { background: #f85149; animation: pulse 0.5s infinite; }
         @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
 
         /* Grid layout */
@@ -387,6 +388,9 @@
         <span>輪次: <strong id="roundNum">-</strong></span>
         <span>更新: <strong id="lastUpdate">-</strong></span>
         <span>下次刷新: <strong id="countdown">-</strong>秒</span>
+        <button id="restartScanBtn" onclick="restartScan()" style="display:none;padding:5px 14px;border-radius:6px;border:none;background:#f85149;color:#fff;font-weight:600;cursor:pointer;font-size:12px">
+            重新啟動監控
+        </button>
     </div>
 </div>
 
@@ -584,8 +588,12 @@ function updateUI(data) {
     const dot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
     dot.className = 'status-dot status-' + data.status;
-    const statusMap = {scanning: '掃描中...', waiting: '等待中', idle: '閒置'};
+    const statusMap = {scanning: '掃描中...', waiting: '等待中', idle: '閒置', error: '錯誤停止'};
     statusText.textContent = statusMap[data.status] || data.status;
+
+    // 顯示/隱藏重啟按鈕
+    const restartBtn = document.getElementById('restartScanBtn');
+    restartBtn.style.display = data.status === 'error' ? '' : 'none';
 
     document.getElementById('roundNum').textContent = data.round || '-';
     document.getElementById('lastUpdate').textContent = data.last_update || '-';
@@ -716,6 +724,23 @@ function renderResult(r, rank) {
             <div><div class="ee-label">風報比</div><div class="ee-value ee-rr">1:${r.rr}</div></div>
         </div>
     </div>`;
+}
+
+// ===== Restart Scan =====
+function restartScan() {
+    const btn = document.getElementById('restartScanBtn');
+    btn.textContent = '重啟中...';
+    btn.disabled = true;
+    fetch('/api/scan/restart', { method: 'POST' })
+        .then(r => r.json())
+        .then(() => {
+            btn.textContent = '重新啟動監控';
+            btn.disabled = false;
+        })
+        .catch(() => {
+            btn.textContent = '重新啟動監控';
+            btn.disabled = false;
+        });
 }
 
 // ===== Single Coin Backtest =====
