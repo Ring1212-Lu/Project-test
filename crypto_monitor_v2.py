@@ -47,8 +47,8 @@ TICK_URL   = "https://api.pionex.com/api/v1/market/tickers"
 INTERVAL   = 180       # 秒，每輪間隔（3分鐘，避免 API 限流）
 TOP_N      = 3         # 最終回報前幾名
 MIN_SIG    = 3         # 最低訊號次數門檻
-TOP15_PCT  = 0.10      # 每側（漲/跌）取百分比
-TOP15_MAX  = 10        # 每側最多取幾個
+TOP15_PCT  = 0.08      # 每側（漲/跌）取百分比
+TOP15_MAX  = 6         # 每側最多取幾個（減少 API 呼叫）
 MAX_WORKERS = 2        # 並行執行緒數（降低避免 429）
 MAX_RETRIES = 3        # API 請求重試次數
 
@@ -315,10 +315,14 @@ def _create_session():
     from requests.adapters import HTTPAdapter
     from urllib3.util.retry import Retry
     session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+    })
     retry = Retry(
         total=MAX_RETRIES,
-        backoff_factor=2,         # 2s, 4s, 8s（429 時等更久再重試）
-        status_forcelist=[429, 500, 502, 503, 504],
+        backoff_factor=3,         # 3s, 6s, 12s（429 時等更久再重試）
+        status_forcelist=[500, 502, 503, 504],  # 429 不自動重試，由節流控制
         allowed_methods=["GET"],
     )
     adapter = HTTPAdapter(max_retries=retry, pool_connections=3, pool_maxsize=3)
@@ -330,14 +334,14 @@ def _create_session():
 # 全域 Session（連線池復用，避免反覆握手）
 _session = _create_session()
 
-# API 請求節流：每次請求間隔至少 0.3 秒
+# API 請求節流：每次請求間隔至少 1 秒
 import threading
 _api_lock = threading.Lock()
 _last_api_call = 0
-API_THROTTLE = 0.3  # 秒
+API_THROTTLE = 1.0  # 秒（加大間隔避免 429）
 
 def _throttled_get(url, **kwargs):
-    """帶節流的 GET 請求，避免觸發 429"""
+    """帶節流的 GET 請求，遇到 429 自動等待重試"""
     global _last_api_call
     with _api_lock:
         now = time.time()
@@ -345,7 +349,17 @@ def _throttled_get(url, **kwargs):
         if wait > 0:
             time.sleep(wait)
         _last_api_call = time.time()
-    return _session.get(url, **kwargs)
+
+    r = _session.get(url, **kwargs)
+    # 遇到 429 自動等待後重試一次
+    if r.status_code == 429:
+        retry_after = int(r.headers.get("Retry-After", 30))
+        print(f"  [WARN] 429 限流，等待 {retry_after} 秒後重試...")
+        time.sleep(retry_after)
+        with _api_lock:
+            _last_api_call = time.time()
+        r = _session.get(url, **kwargs)
+    return r
 
 
 def fetch_klines(symbol, interval="1M", limit=120):
