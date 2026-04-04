@@ -44,7 +44,7 @@ except ImportError:
 # ===== 全域設定 =====
 BASE_URL   = "https://api.pionex.com/api/v1/market/klines"
 TICK_URL   = "https://api.pionex.com/api/v1/market/tickers"
-INTERVAL   = 90        # 秒，每輪間隔（避免 API 限流）
+INTERVAL   = 180       # 秒，每輪間隔（3分鐘，避免 API 限流）
 TOP_N      = 3         # 最終回報前幾名
 MIN_SIG    = 3         # 最低訊號次數門檻
 TOP15_PCT  = 0.10      # 每側（漲/跌）取百分比
