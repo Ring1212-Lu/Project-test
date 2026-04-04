@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crypto Monitor v2</title>
+    <title>幣圈監控 v2</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -378,126 +378,126 @@
 <body>
 
 <div class="header">
-    <h1>Crypto Monitor v2 - Self-Learning Dashboard</h1>
+    <h1>幣圈監控 v2 - 自學習儀表板</h1>
     <div class="header-info">
         <span>
             <span class="status-dot status-idle" id="statusDot"></span>
-            <span id="statusText">Connecting...</span>
+            <span id="statusText">連線中...</span>
         </span>
-        <span>Round: <strong id="roundNum">-</strong></span>
-        <span>Updated: <strong id="lastUpdate">-</strong></span>
-        <span>Next refresh: <strong id="countdown">-</strong>s</span>
+        <span>輪次: <strong id="roundNum">-</strong></span>
+        <span>更新: <strong id="lastUpdate">-</strong></span>
+        <span>下次刷新: <strong id="countdown">-</strong>秒</span>
     </div>
 </div>
 
 <div class="container">
 
-    <!-- Market Overview -->
+    <!-- 市場概覽 -->
     <div class="card full-width">
-        <div class="card-title">Market Overview</div>
+        <div class="card-title">市場概覽</div>
         <div class="stats-row" id="statsRow">
             <div class="stat-item">
                 <div class="stat-value" id="statPerps">-</div>
-                <div class="stat-label">Total Contracts</div>
+                <div class="stat-label">合約總數</div>
             </div>
             <div class="stat-item">
                 <div class="stat-value" id="statPool">-</div>
-                <div class="stat-label">Analysis Pool</div>
+                <div class="stat-label">分析池</div>
             </div>
             <div class="stat-item stat-green">
                 <div class="stat-value" id="statGainer">-</div>
-                <div class="stat-label" id="statGainerName">Top Gainer</div>
+                <div class="stat-label" id="statGainerName">最大漲幅</div>
             </div>
             <div class="stat-item stat-red">
                 <div class="stat-value" id="statLoser">-</div>
-                <div class="stat-label" id="statLoserName">Top Loser</div>
+                <div class="stat-label" id="statLoserName">最大跌幅</div>
             </div>
             <div class="stat-item stat-yellow">
                 <div class="stat-value" id="statValid">-</div>
-                <div class="stat-label">Valid Results</div>
+                <div class="stat-label">有效結果</div>
             </div>
         </div>
     </div>
 
-    <!-- Top 3 Results -->
+    <!-- 推薦排名 -->
     <div class="card full-width">
-        <div class="card-title">Top Recommendations</div>
+        <div class="card-title">推薦排名</div>
         <div id="topResults">
             <div class="empty-state">
                 <div class="icon">...</div>
-                <div>Waiting for first scan...</div>
+                <div>等待第一輪掃描...</div>
             </div>
         </div>
     </div>
 
-    <!-- Single Coin Backtest -->
+    <!-- 單幣回測查詢 -->
     <div class="card full-width">
-        <div class="card-title">Single Coin Backtest</div>
+        <div class="card-title">單幣回測查詢</div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
-            <input id="btSymbolInput" type="text" placeholder="e.g. BTC, ETH, SOL, DOGE"
+            <input id="btSymbolInput" type="text" placeholder="輸入幣種，例如 BTC、ETH、SOL、DOGE"
                    style="flex:1;min-width:180px;max-width:300px;padding:8px 12px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e0e6ed;font-size:14px"
                    onkeydown="if(event.key==='Enter')runBacktest()">
             <button onclick="runBacktest()" id="btRunBtn"
                     style="padding:8px 20px;border-radius:6px;border:none;background:#1f6feb;color:#fff;font-weight:600;cursor:pointer;font-size:13px">
-                Run Backtest
+                開始回測
             </button>
             <span id="btStatus" style="font-size:12px;color:#8b949e"></span>
         </div>
         <div id="btResults"></div>
     </div>
 
-    <!-- Learning Stats -->
+    <!-- 自學習統計 -->
     <div class="card two-cols">
-        <div class="card-title">Self-Learning Stats</div>
+        <div class="card-title">自學習統計</div>
         <div class="stats-row" style="margin-bottom:12px">
             <div class="stat-item">
                 <div class="stat-value" id="learnPredictions">-</div>
-                <div class="stat-label">Total Predictions</div>
+                <div class="stat-label">預測總數</div>
             </div>
             <div class="stat-item">
                 <div class="stat-value" id="learnValidated">-</div>
-                <div class="stat-label">Validated</div>
+                <div class="stat-label">已驗證</div>
             </div>
             <div class="stat-item stat-green">
                 <div class="stat-value" id="learnRate">-</div>
-                <div class="stat-label">Overall Win Rate</div>
+                <div class="stat-label">整體勝率</div>
             </div>
             <div class="stat-item">
                 <div class="stat-value" id="learnPending">-</div>
-                <div class="stat-label">Pending</div>
+                <div class="stat-label">等待中</div>
             </div>
         </div>
         <div class="learn-grid" id="stratStats">
             <div class="learn-item">
-                <div class="learn-strat" style="color:#f85149">Short</div>
+                <div class="learn-strat" style="color:#f85149">做空</div>
                 <div class="learn-detail" id="stratShort">-</div>
             </div>
             <div class="learn-item">
-                <div class="learn-strat" style="color:#3fb950">Bottom</div>
+                <div class="learn-strat" style="color:#3fb950">抄底</div>
                 <div class="learn-detail" id="stratBottom">-</div>
             </div>
             <div class="learn-item">
-                <div class="learn-strat" style="color:#d29922">Chase</div>
+                <div class="learn-strat" style="color:#d29922">追多</div>
                 <div class="learn-detail" id="stratChase">-</div>
             </div>
         </div>
     </div>
 
-    <!-- Top Performers -->
+    <!-- 歷史最佳組合 -->
     <div class="card">
-        <div class="card-title">Best Historical Combos</div>
+        <div class="card-title">歷史最佳組合</div>
         <div class="perf-list" id="perfList">
             <div class="empty-state" style="padding:20px">
-                <div>No data yet</div>
+                <div>尚無資料</div>
             </div>
         </div>
     </div>
 
-    <!-- Trading Bot -->
+    <!-- 交易機器人 -->
     <div class="card full-width">
         <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
-            <span>Trading Bot (Paper Mode)</span>
-            <span id="botStatusBadge" style="font-size:12px;padding:3px 10px;border-radius:12px;background:rgba(139,148,158,0.15);color:#8b949e">OFF</span>
+            <span>交易機器人 (模擬模式)</span>
+            <span id="botStatusBadge" style="font-size:12px;padding:3px 10px;border-radius:12px;background:rgba(139,148,158,0.15);color:#8b949e">關閉</span>
         </div>
         <div id="botSection">
             <div id="botOffPanel" style="text-align:center;padding:20px">
@@ -509,7 +509,7 @@
                     <span style="font-size:13px;color:#8b949e">U</span>
                     <button id="botStartBtn" onclick="startBot()"
                             style="padding:8px 20px;border-radius:6px;border:none;background:#238636;color:#fff;font-weight:600;cursor:pointer;font-size:13px">
-                        Start Bot
+                        啟動機器人
                     </button>
                 </div>
             </div>
@@ -518,27 +518,27 @@
                 <div class="stats-row" style="margin-bottom:14px">
                     <div class="stat-item">
                         <div class="stat-value" id="botBalance">-</div>
-                        <div class="stat-label">Balance (U)</div>
+                        <div class="stat-label">餘額 (U)</div>
                     </div>
                     <div class="stat-item" id="botDailyItem">
                         <div class="stat-value" id="botDailyPnl">-</div>
-                        <div class="stat-label">Daily PnL</div>
+                        <div class="stat-label">當日盈虧</div>
                     </div>
                     <div class="stat-item" id="botTotalItem">
                         <div class="stat-value" id="botTotalPnl">-</div>
-                        <div class="stat-label">Total PnL</div>
+                        <div class="stat-label">總盈虧</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-value" id="botWinRate">-</div>
-                        <div class="stat-label">Win Rate</div>
+                        <div class="stat-label">勝率</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-value" id="botTrades">-</div>
-                        <div class="stat-label">Trades</div>
+                        <div class="stat-label">交易次數</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-value" id="botOpenPos">-</div>
-                        <div class="stat-label">Open Positions</div>
+                        <div class="stat-label">持倉數</div>
                     </div>
                 </div>
 
@@ -549,15 +549,15 @@
                 <div id="botClosedTrades" style="margin-bottom:14px"></div>
 
                 <!-- Bot logs -->
-                <div class="card-title" style="margin-top:8px;font-size:12px">Bot Logs</div>
+                <div class="card-title" style="margin-top:8px;font-size:12px">機器人日誌</div>
                 <div class="log-box" id="botLogBox" style="max-height:180px"></div>
             </div>
         </div>
     </div>
 
-    <!-- Live Logs -->
+    <!-- 即時日誌 -->
     <div class="card full-width">
-        <div class="card-title">Live Logs (Monitor)</div>
+        <div class="card-title">監控即時日誌</div>
         <div class="log-box" id="logBox"></div>
     </div>
 
@@ -575,7 +575,7 @@ function fetchState() {
             updateUI(data);
         })
         .catch(err => {
-            document.getElementById('statusText').textContent = 'Connection error';
+            document.getElementById('statusText').textContent = '連線錯誤';
         });
 }
 
@@ -584,7 +584,7 @@ function updateUI(data) {
     const dot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
     dot.className = 'status-dot status-' + data.status;
-    const statusMap = {scanning: 'Scanning...', waiting: 'Waiting', idle: 'Idle'};
+    const statusMap = {scanning: '掃描中...', waiting: '等待中', idle: '閒置'};
     statusText.textContent = statusMap[data.status] || data.status;
 
     document.getElementById('roundNum').textContent = data.round || '-';
@@ -652,7 +652,7 @@ function updateUI(data) {
 
 function formatStrat(s) {
     if (!s) return '-';
-    return `${s.wins}W / ${s.losses}L<br><strong>${s.rate}%</strong>`;
+    return `${s.wins}勝 / ${s.losses}敗<br><strong>${s.rate}%</strong>`;
 }
 
 function renderResult(r, rank) {
@@ -666,15 +666,15 @@ function renderResult(r, rank) {
     if (r.best_strat === '做空') stratClass = 'strat-short';
     else if (r.best_strat === '追多') stratClass = 'strat-chase';
 
-    const obvStr = {1:'Up', '-1':'Down', 0:'Flat'}[r.obv_dir] || '?';
+    const obvStr = {1:'上升', '-1':'下降', 0:'持平'}[r.obv_dir] || '?';
 
     // Weight bars data
     const weights = [
-        {label: 'Learn', val: r.weight, max: 2.5, color: '#58a6ff'},
-        {label: 'Regime', val: r.regime_bonus, max: 1.5, color: '#3fb950'},
+        {label: '學習', val: r.weight, max: 2.5, color: '#58a6ff'},
+        {label: '趨勢', val: r.regime_bonus, max: 1.5, color: '#3fb950'},
         {label: 'OBV', val: r.obv_bonus, max: 1.2, color: '#d29922'},
-        {label: 'Recent', val: r.recent_bonus, max: 1.2, color: '#bc8cff'},
-        {label: 'Conf', val: r.confidence, max: 1.5, color: '#f0883e'},
+        {label: '近期', val: r.recent_bonus, max: 1.2, color: '#bc8cff'},
+        {label: '信心', val: r.confidence, max: 1.5, color: '#f0883e'},
     ];
     const weightBars = weights.map(w => {
         const pct = Math.min((w.val / w.max) * 100, 100);
@@ -697,23 +697,23 @@ function renderResult(r, rank) {
             <span class="strategy-badge ${stratClass}">${stratLabel}</span>
             <span class="signal-badge signal-${r.signal_strength}">${r.signal_strength}</span>
             <span class="regime-badge">${r.regime}</span>
-            <span style="margin-left:auto;font-size:13px;color:#58a6ff;font-weight:700">Score: ${r.best_score}</span>
+            <span style="margin-left:auto;font-size:13px;color:#58a6ff;font-weight:700">分數: ${r.best_score}</span>
         </div>
         <div class="result-grid">
-            <span class="label">Price</span><span class="value">${r.price}</span>
+            <span class="label">價格</span><span class="value">${r.price}</span>
             <span class="label">RSI</span><span class="value">${r.rsi}</span>
             <span class="label">MFI</span><span class="value">${r.mfi}</span>
-            <span class="label">BB</span><span class="value">${r.bb_pos}</span>
+            <span class="label">布林</span><span class="value">${r.bb_pos}</span>
             <span class="label">OBV</span><span class="value">${obvStr}</span>
-            <span class="label">Win Rate</span><span class="value">${r.best_rate}% (${r.best_total}x)</span>
+            <span class="label">勝率</span><span class="value">${r.best_rate}% (${r.best_total}次)</span>
         </div>
         <div class="weight-bar-container">${weightBars}</div>
         <div style="font-size:11px;color:#8b949e;margin:8px 0 6px">${r.detail}</div>
         <div class="entry-exit">
-            <div><div class="ee-label">Entry</div><div class="ee-value">${r.price}</div></div>
-            <div><div class="ee-label">TP (+${r.tp_pct}%)</div><div class="ee-value ee-tp">${r.tp}</div></div>
-            <div><div class="ee-label">SL (-${r.sl_pct}%)</div><div class="ee-value ee-sl">${r.sl}</div></div>
-            <div><div class="ee-label">R:R</div><div class="ee-value ee-rr">1:${r.rr}</div></div>
+            <div><div class="ee-label">進場價</div><div class="ee-value">${r.price}</div></div>
+            <div><div class="ee-label">止盈 (+${r.tp_pct}%)</div><div class="ee-value ee-tp">${r.tp}</div></div>
+            <div><div class="ee-label">止損 (-${r.sl_pct}%)</div><div class="ee-value ee-sl">${r.sl}</div></div>
+            <div><div class="ee-label">風報比</div><div class="ee-value ee-rr">1:${r.rr}</div></div>
         </div>
     </div>`;
 }
@@ -735,26 +735,26 @@ function runBacktest() {
     const container = document.getElementById('btResults');
 
     btn.disabled = true;
-    btn.textContent = 'Analyzing...';
-    status.textContent = `Backtesting ${sym} ...`;
-    container.innerHTML = '<div class="empty-state" style="padding:20px"><div>Loading data & running backtest...</div></div>';
+    btn.textContent = '分析中...';
+    status.textContent = `正在回測 ${sym} ...`;
+    container.innerHTML = '<div class="empty-state" style="padding:20px"><div>正在載入資料並執行回測...</div></div>';
 
     fetch('/api/backtest/' + sym)
         .then(r => {
-            if (!r.ok) throw new Error(r.status === 404 ? 'No data or insufficient trades' : 'Request failed');
+            if (!r.ok) throw new Error(r.status === 404 ? '無資料或交易次數不足' : '請求失敗');
             return r.json();
         })
         .then(data => {
             btn.disabled = false;
-            btn.textContent = 'Run Backtest';
+            btn.textContent = '開始回測';
             status.textContent = '';
             renderBacktestResults(data, container);
         })
         .catch(err => {
             btn.disabled = false;
-            btn.textContent = 'Run Backtest';
+            btn.textContent = '開始回測';
             status.textContent = '';
-            container.innerHTML = `<div class="empty-state" style="padding:20px;color:#f85149">${err.message}<br><span style="font-size:11px;color:#8b949e">Make sure the symbol exists (e.g. BTC, ETH, SOL)</span></div>`;
+            container.innerHTML = `<div class="empty-state" style="padding:20px;color:#f85149">${err.message}<br><span style="font-size:11px;color:#8b949e">請確認幣種名稱正確（例如 BTC、ETH、SOL）</span></div>`;
         });
 }
 
@@ -799,7 +799,7 @@ function renderBacktestResults(data, container) {
             style="padding:5px 14px;border-radius:6px;border:1px solid ${active ? '#58a6ff' : '#30363d'};
             background:${active ? 'rgba(88,166,255,0.1)' : '#0d1117'};
             color:${active ? '#58a6ff' : '#8b949e'};font-size:12px;cursor:pointer;font-weight:${active ? '600' : '400'}">
-            Hold ${hp} bars</button>`;
+            持倉 ${hp} 根K線</button>`;
     });
     tabsHTML += '</div>';
 
@@ -813,7 +813,7 @@ function renderBacktestResults(data, container) {
 
         const stratOrder = ['做空', '抄底', '追多'];
         const stratColors = {'做空': '#f85149', '抄底': '#3fb950', '追多': '#d29922'};
-        const stratLabels = {'做空': 'Short', '抄底': 'Bottom Fish', '追多': 'Chase Long'};
+        const stratLabels = {'做空': '做空', '抄底': '抄底', '追多': '追多'};
 
         stratOrder.forEach(strat => {
             const r = strats[strat];
@@ -822,7 +822,7 @@ function renderBacktestResults(data, container) {
                     <div class="bt-strat-header">
                         <span class="bt-strat-name" style="color:${stratColors[strat]}">${stratLabels[strat]} (${strat})</span>
                     </div>
-                    <div style="color:#484f58;font-size:12px;text-align:center;padding:16px">No signals found</div>
+                    <div style="color:#484f58;font-size:12px;text-align:center;padding:16px">無信號</div>
                 </div>`;
                 return;
             }
@@ -842,18 +842,18 @@ function renderBacktestResults(data, container) {
             cardsHTML += `<div class="bt-strat-card ${isBest ? 'bt-best' : ''}">
                 <div class="bt-strat-header">
                     <span class="bt-strat-name" style="color:${stratColors[strat]}">${stratLabels[strat]} (${strat})</span>
-                    ${isBest ? '<span class="bt-best-tag">Best Strategy</span>' : ''}
+                    ${isBest ? '<span class="bt-best-tag">最佳策略</span>' : ''}
                 </div>
                 <div class="bt-metrics">
-                    <span class="bt-label">Win Rate</span><span class="bt-val" style="color:${wrColor}">${r.win_rate}%</span>
-                    <span class="bt-label">Trades</span><span class="bt-val">${r.total} (${r.wins}W / ${r.losses}L)</span>
-                    <span class="bt-label">Avg PnL</span><span class="bt-val" style="color:${r.avg_pnl >= 0 ? '#3fb950' : '#f85149'}">${r.avg_pnl >= 0 ? '+' : ''}${r.avg_pnl}%</span>
-                    <span class="bt-label">Expectancy</span><span class="bt-val" style="color:${expColor}">${r.expectancy >= 0 ? '+' : ''}${r.expectancy}%</span>
-                    <span class="bt-label">Avg Win</span><span class="bt-val" style="color:#3fb950">+${r.avg_win}%</span>
-                    <span class="bt-label">Avg Loss</span><span class="bt-val" style="color:#f85149">${r.avg_loss}%</span>
-                    <span class="bt-label">Sharpe</span><span class="bt-val">${r.sharpe}</span>
-                    <span class="bt-label">Max Drawdown</span><span class="bt-val" style="color:#f85149">${r.max_drawdown}%</span>
-                    <span class="bt-label">Max ConsLoss</span><span class="bt-val">${r.max_consecutive_loss}</span>
+                    <span class="bt-label">勝率</span><span class="bt-val" style="color:${wrColor}">${r.win_rate}%</span>
+                    <span class="bt-label">交易次數</span><span class="bt-val">${r.total} (${r.wins}勝 / ${r.losses}敗)</span>
+                    <span class="bt-label">平均盈虧</span><span class="bt-val" style="color:${r.avg_pnl >= 0 ? '#3fb950' : '#f85149'}">${r.avg_pnl >= 0 ? '+' : ''}${r.avg_pnl}%</span>
+                    <span class="bt-label">期望報酬</span><span class="bt-val" style="color:${expColor}">${r.expectancy >= 0 ? '+' : ''}${r.expectancy}%</span>
+                    <span class="bt-label">平均獲利</span><span class="bt-val" style="color:#3fb950">+${r.avg_win}%</span>
+                    <span class="bt-label">平均虧損</span><span class="bt-val" style="color:#f85149">${r.avg_loss}%</span>
+                    <span class="bt-label">夏普比率</span><span class="bt-val">${r.sharpe}</span>
+                    <span class="bt-label">最大回撤</span><span class="bt-val" style="color:#f85149">${r.max_drawdown}%</span>
+                    <span class="bt-label">最大連虧</span><span class="bt-val">${r.max_consecutive_loss}</span>
                 </div>
                 ${regimeHTML ? '<div class="bt-regime-row">' + regimeHTML + '</div>' : ''}
             </div>`;
@@ -863,7 +863,7 @@ function renderBacktestResults(data, container) {
     });
 
     container.innerHTML = `
-        <div style="font-size:16px;font-weight:700;color:#58a6ff;margin-bottom:12px">${displayName} Backtest Results</div>
+        <div style="font-size:16px;font-weight:700;color:#58a6ff;margin-bottom:12px">${displayName} 回測結果</div>
         ${tabsHTML}
         ${cardsHTML}
     `;
@@ -895,7 +895,7 @@ function fetchTrading() {
 function startBot() {
     const balance = parseFloat(document.getElementById('botBalanceInput').value) || 100;
     const btn = document.getElementById('botStartBtn');
-    btn.textContent = 'Starting...';
+    btn.textContent = '啟動中...';
     btn.disabled = true;
     fetch('/api/trading/start', {
         method: 'POST',
@@ -905,7 +905,7 @@ function startBot() {
     .then(r => r.json())
     .then(data => {
         if (data.error) {
-            btn.textContent = 'Start Bot';
+            btn.textContent = '啟動機器人';
             btn.disabled = false;
             alert(data.error);
         }
@@ -925,7 +925,7 @@ function updateBotUI(data) {
     const hasData = data.enabled || (data.status && Object.keys(data.status).length > 0);
 
     if (!hasData) {
-        badge.textContent = 'OFF';
+        badge.textContent = '關閉';
         badge.style.background = 'rgba(139,148,158,0.15)';
         badge.style.color = '#8b949e';
         offPanel.style.display = '';
@@ -939,17 +939,17 @@ function updateBotUI(data) {
 
     const s = data.status;
     if (data.enabled) {
-        badge.textContent = 'RUNNING';
+        badge.textContent = '運行中';
         badge.style.background = 'rgba(63,185,80,0.15)';
         badge.style.color = '#3fb950';
     } else {
-        badge.textContent = 'HISTORY';
+        badge.textContent = '歷史紀錄';
         badge.style.background = 'rgba(210,153,34,0.15)';
         badge.style.color = '#d29922';
     }
 
     if (s.halted) {
-        badge.textContent = 'HALTED';
+        badge.textContent = '已停機';
         badge.style.background = 'rgba(248,81,73,0.15)';
         badge.style.color = '#f85149';
     }
@@ -974,15 +974,15 @@ function updateBotUI(data) {
     const posContainer = document.getElementById('botPositions');
     let posHTML = '';
     if (s.halted) {
-        posHTML += `<div class="halted-banner">HALTED: ${s.halt_reason}</div>`;
+        posHTML += `<div class="halted-banner">已停機: ${s.halt_reason}</div>`;
     }
 
     // Open positions table
     const positions = data.open_positions || [];
     if (positions.length > 0) {
-        posHTML += `<div style="font-size:12px;color:#8b949e;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Open Positions</div>
+        posHTML += `<div style="font-size:12px;color:#8b949e;margin-bottom:6px;letter-spacing:0.5px">持倉中</div>
         <table class="bot-table"><thead><tr>
-            <th>Symbol</th><th>Side</th><th>Strategy</th><th>Entry</th><th>TP</th><th>SL</th><th>Size</th><th>Score</th><th>Opened</th>
+            <th>幣種</th><th>方向</th><th>策略</th><th>進場價</th><th>止盈</th><th>止損</th><th>倉位</th><th>分數</th><th>開倉時間</th>
         </tr></thead><tbody>`;
         positions.forEach(p => {
             const sideColor = p.side === 'BUY' ? '#3fb950' : '#f85149';
@@ -1006,9 +1006,9 @@ function updateBotUI(data) {
     const trades = (data.closed_trades || []).slice(-15).reverse();
     const tradesContainer = document.getElementById('botClosedTrades');
     if (trades.length > 0) {
-        let tHTML = `<div style="font-size:12px;color:#8b949e;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Recent Closed Trades</div>
+        let tHTML = `<div style="font-size:12px;color:#8b949e;margin-bottom:6px;letter-spacing:0.5px">近期已平倉</div>
         <table class="bot-table"><thead><tr>
-            <th>Symbol</th><th>Side</th><th>Strategy</th><th>Entry</th><th>PnL</th><th>Closed</th>
+            <th>幣種</th><th>方向</th><th>策略</th><th>進場價</th><th>盈虧</th><th>平倉時間</th>
         </tr></thead><tbody>`;
         trades.forEach(t => {
             const pnl = t.pnl || 0;
