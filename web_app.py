@@ -13,17 +13,21 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 
 from crypto_monitor_v2 import (
     fetch_tickers, fetch_and_analyze, analyze,
     TOP15_PCT, TOP15_MAX, TOP_N, INTERVAL, MAX_WORKERS
 )
 from learning_engine import LearningEngine
+from trading_bot import RiskManager, check_positions, save_trade_log
+from pionex_client import PionexClient
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_data.json")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LEARNING_FILE = os.path.join(BASE_DIR, "learning_data.json")
+TRADE_LOG_FILE = os.path.join(BASE_DIR, "trade_log.json")
 
 # 全域狀態
 state = {
@@ -42,6 +46,19 @@ state = {
 }
 state_lock = threading.Lock()
 
+# 交易機器人全域狀態
+trading_state = {
+    "enabled": False,
+    "round": 0,
+    "status": {},
+    "open_positions": [],
+    "closed_trades": [],
+    "logs": [],
+}
+trading_lock = threading.Lock()
+trading_risk_mgr = None
+trading_client = None
+
 MAX_LOGS = 200
 
 
@@ -53,6 +70,198 @@ def add_log(msg):
         })
         if len(state["logs"]) > MAX_LOGS:
             state["logs"] = state["logs"][-MAX_LOGS:]
+
+
+def add_trading_log(msg):
+    with trading_lock:
+        trading_state["logs"].append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "msg": msg,
+        })
+        if len(trading_state["logs"]) > MAX_LOGS:
+            trading_state["logs"] = trading_state["logs"][-MAX_LOGS:]
+
+
+def run_trading_bot(initial_balance=100):
+    """背景交易機器人執行緒"""
+    global trading_risk_mgr, trading_client
+
+    from crypto_monitor_v2 import get_btc_trend
+
+    client = PionexClient(paper_mode=True)
+    client.paper_balance = initial_balance
+
+    risk_config = {
+        "max_loss_pct": 10,
+        "max_position_pct": 20,
+        "max_positions": 2,
+        "max_consecutive_loss": 3,
+        "min_signal_strength": "STRONG",
+        "min_score": 60,
+        "min_win_rate": 55,
+        "min_rr": 1.3,
+    }
+    risk_mgr = RiskManager(initial_balance, risk_config)
+    learner = LearningEngine(LEARNING_FILE)
+
+    with trading_lock:
+        trading_risk_mgr = risk_mgr
+        trading_client = client
+        trading_state["enabled"] = True
+
+    add_trading_log(f"機器人啟動 | 初始資金: {initial_balance}U (模擬模式)")
+    round_num = 0
+
+    while True:
+        round_num += 1
+        with trading_lock:
+            trading_state["round"] = round_num
+
+        add_trading_log(f"=== 交易掃描第 {round_num} 輪 ===")
+
+        # 檢查現有持倉
+        check_positions(risk_mgr, client)
+
+        # 驗證學習預測
+        validated = learner.validate_pending_predictions()
+        if validated > 0:
+            add_trading_log(f"驗證了 {validated} 筆預測")
+
+        opt_params = learner.get_optimized_params()
+        btc_trend = get_btc_trend()
+        btc_str = {1: "UP", -1: "DOWN", 0: "NEUTRAL"}.get(btc_trend, "?")
+        add_trading_log(f"BTC 趨勢: {btc_str}")
+
+        # 抓行情
+        tickers = fetch_tickers()
+        perps = []
+        for t in tickers:
+            sym = t.get("symbol", "")
+            if not sym.endswith("_USDT_PERP"):
+                continue
+            try:
+                o = float(t.get("open", 0))
+                c = float(t.get("close", 0))
+                vol = float(t.get("amount", 0))
+                if o <= 0 or c <= 0 or vol < 5000:
+                    continue
+                change = (c - o) / o * 100
+                perps.append({"symbol": sym, "change": change, "price": c})
+            except (ValueError, ZeroDivisionError):
+                continue
+
+        if not perps:
+            add_trading_log("無法取得行情")
+            time.sleep(INTERVAL)
+            continue
+
+        perps.sort(key=lambda x: x["change"], reverse=True)
+        n15 = max(1, int(len(perps) * TOP15_PCT))
+        gainers = perps[:n15][:TOP15_MAX]
+        losers = list(reversed(perps[-n15:]))[:TOP15_MAX]
+        pool = gainers + losers
+
+        seen = set()
+        pool = [c for c in pool if c["symbol"] not in seen and not seen.add(c["symbol"])]
+
+        # 排除已持倉
+        held_symbols = {p["symbol"] for p in risk_mgr.open_positions}
+        pool = [c for c in pool if c["symbol"] not in held_symbols]
+
+        add_trading_log(f"分析池 {len(pool)} 個（排除已持倉 {len(held_symbols)}）")
+
+        # 並行分析
+        results = []
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_map = {
+                executor.submit(fetch_and_analyze, coin, learner, opt_params, btc_trend): coin
+                for coin in pool
+            }
+            for future in as_completed(future_map):
+                try:
+                    res = future.result()
+                    if res:
+                        results.append(res)
+                except Exception:
+                    pass
+
+        if not results:
+            add_trading_log("無有效信號")
+            _update_trading_state(risk_mgr)
+            save_trade_log(risk_mgr)
+            time.sleep(INTERVAL)
+            continue
+
+        results.sort(key=lambda x: x["best_score"], reverse=True)
+
+        # 嘗試開倉
+        opened = 0
+        for r in results[:TOP_N]:
+            can_open, reason = risk_mgr.can_open_position(r)
+            if not can_open:
+                add_trading_log(f"{r['symbol'].replace('_USDT_PERP','')}: SKIP ({reason})")
+                continue
+
+            size_usd, pct = risk_mgr.calc_position_size(r)
+            if size_usd < 1:
+                continue
+
+            strat = r["best_strat"]
+            side = "SELL" if strat == "做空" else "BUY"
+            price = r["price"]
+            quantity = round(size_usd / price, 6) if price > 0 else 0
+            if quantity <= 0:
+                continue
+
+            order_result = client.place_order(r["symbol"], side, "MARKET", quantity)
+
+            if order_result.get("result") or order_result.get("paper_mode"):
+                pos = {
+                    "id": f"pos_{int(time.time()*1000)}",
+                    "symbol": r["symbol"],
+                    "side": side,
+                    "strategy": strat,
+                    "entry_price": price,
+                    "tp_price": r["tp"],
+                    "sl_price": r["sl"],
+                    "size": size_usd,
+                    "quantity": quantity,
+                    "score": r["best_score"],
+                    "signal_strength": r["signal_strength"],
+                    "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                risk_mgr.record_open(pos)
+                learner.record_prediction(
+                    symbol=r["symbol"], strategy=strat,
+                    entry_price=price, tp_price=r["tp"], sl_price=r["sl"],
+                    rate=r["best_rate"], score=r["best_score"], regime=r["regime"],
+                )
+                opened += 1
+                add_trading_log(f"OPEN {r['symbol'].replace('_USDT_PERP','')} {strat}({side}) "
+                                f"{size_usd}U | Score:{r['best_score']} | TP:{r['tp']} SL:{r['sl']}")
+            else:
+                add_trading_log(f"ORDER FAILED: {r['symbol']} - {order_result}")
+
+        if opened > 0:
+            add_trading_log(f"本輪開倉 {opened} 筆")
+
+        _update_trading_state(risk_mgr)
+        save_trade_log(risk_mgr)
+        learner.save()
+
+        status = risk_mgr.get_status()
+        add_trading_log(f"Balance: {status['balance']}U | Open: {status['open_positions']} | "
+                        f"Today: {status['daily_pnl']:+.2f}U")
+
+        time.sleep(INTERVAL)
+
+
+def _update_trading_state(risk_mgr):
+    """將風控狀態同步到全域 trading_state"""
+    with trading_lock:
+        trading_state["status"] = risk_mgr.get_status()
+        trading_state["open_positions"] = list(risk_mgr.open_positions)
+        trading_state["closed_trades"] = list(risk_mgr.closed_trades[-50:])
 
 
 def run_background_scan():
@@ -290,14 +499,84 @@ def api_learning():
     return jsonify({"error": "No learning data yet"}), 404
 
 
+@app.route("/api/trading")
+def api_trading():
+    """交易機器人狀態 API"""
+    with trading_lock:
+        if not trading_state["enabled"]:
+            # 嘗試從 trade_log.json 讀取
+            if os.path.exists(TRADE_LOG_FILE):
+                try:
+                    with open(TRADE_LOG_FILE, 'r', encoding='utf-8') as f:
+                        log_data = json.load(f)
+                    return jsonify({
+                        "enabled": False,
+                        "source": "file",
+                        "last_updated": log_data.get("last_updated"),
+                        "status": log_data.get("status", {}),
+                        "open_positions": log_data.get("open_positions", []),
+                        "closed_trades": log_data.get("closed_trades", [])[-30:],
+                        "logs": [],
+                    })
+                except (json.JSONDecodeError, IOError):
+                    pass
+            return jsonify({"enabled": False, "status": {}, "open_positions": [], "closed_trades": [], "logs": []})
+
+        return jsonify({
+            "enabled": True,
+            "source": "live",
+            "round": trading_state["round"],
+            "status": trading_state["status"],
+            "open_positions": trading_state["open_positions"],
+            "closed_trades": trading_state["closed_trades"],
+            "logs": trading_state["logs"][-50:],
+        })
+
+
+@app.route("/api/trading/start", methods=["POST"])
+def api_trading_start():
+    """啟動模擬交易機器人"""
+    with trading_lock:
+        if trading_state["enabled"]:
+            return jsonify({"error": "Bot already running"}), 400
+
+    balance = 100
+    try:
+        data = request.get_json(silent=True)
+        if data and "balance" in data:
+            balance = float(data["balance"])
+    except (ValueError, TypeError):
+        pass
+
+    bot_thread = threading.Thread(target=run_trading_bot, args=(balance,), daemon=True)
+    bot_thread.start()
+    return jsonify({"result": True, "balance": balance, "msg": f"Paper trading bot started with {balance}U"})
+
+
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="幣圈監控 Web 儀表板")
+    parser.add_argument("--bot", action="store_true", help="同時啟動模擬交易機器人")
+    parser.add_argument("--balance", type=float, default=100, help="機器人初始資金（預設 100U）")
+    args = parser.parse_args()
+
     # 啟動背景掃描
     scan_thread = threading.Thread(target=run_background_scan, daemon=True)
     scan_thread.start()
 
+    # 選擇性啟動交易機器人
+    if args.bot:
+        bot_thread = threading.Thread(target=run_trading_bot, args=(args.balance,), daemon=True)
+        bot_thread.start()
+        print(f" 模擬交易機器人已啟動（初始資金: {args.balance}U）")
+
     print("=" * 50)
     print(" 幣圈監控 Web 儀表板啟動")
     print(" 開啟瀏覽器前往: http://localhost:5000")
+    if args.bot:
+        print(" 模擬交易機器人: 已啟動")
+    else:
+        print(" 模擬交易機器人: 未啟動（可在面板中啟動，或加 --bot 參數）")
     print("=" * 50)
 
     app.run(host="0.0.0.0", port=5000, debug=False)

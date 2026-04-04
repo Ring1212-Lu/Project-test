@@ -274,6 +274,42 @@
         }
         .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
 
+        /* Trading bot tables */
+        .bot-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .bot-table th {
+            background: #161b22;
+            color: #8b949e;
+            padding: 6px 10px;
+            text-align: left;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #30363d;
+        }
+        .bot-table td {
+            padding: 6px 10px;
+            border-bottom: 1px solid #21262d;
+        }
+        .bot-table tr:hover { background: rgba(88,166,255,0.03); }
+        .pnl-positive { color: #3fb950; font-weight: 600; }
+        .pnl-negative { color: #f85149; font-weight: 600; }
+        .halted-banner {
+            background: rgba(248,81,73,0.1);
+            border: 1px solid rgba(248,81,73,0.3);
+            color: #f85149;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+
         /* Responsive */
         @media (max-width: 1024px) {
             .container { grid-template-columns: 1fr; }
@@ -384,9 +420,71 @@
         </div>
     </div>
 
+    <!-- Trading Bot -->
+    <div class="card full-width">
+        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>Trading Bot (Paper Mode)</span>
+            <span id="botStatusBadge" style="font-size:12px;padding:3px 10px;border-radius:12px;background:rgba(139,148,158,0.15);color:#8b949e">OFF</span>
+        </div>
+        <div id="botSection">
+            <div id="botOffPanel" style="text-align:center;padding:20px">
+                <p style="color:#8b949e;margin-bottom:12px">模擬交易機器人未啟動</p>
+                <div style="display:flex;gap:10px;justify-content:center;align-items:center">
+                    <label style="font-size:13px;color:#8b949e">初始資金:</label>
+                    <input id="botBalanceInput" type="number" value="100" min="10" step="10"
+                           style="width:100px;padding:6px 10px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e0e6ed;font-size:14px">
+                    <span style="font-size:13px;color:#8b949e">U</span>
+                    <button id="botStartBtn" onclick="startBot()"
+                            style="padding:8px 20px;border-radius:6px;border:none;background:#238636;color:#fff;font-weight:600;cursor:pointer;font-size:13px">
+                        Start Bot
+                    </button>
+                </div>
+            </div>
+            <div id="botRunPanel" style="display:none">
+                <!-- Bot stats row -->
+                <div class="stats-row" style="margin-bottom:14px">
+                    <div class="stat-item">
+                        <div class="stat-value" id="botBalance">-</div>
+                        <div class="stat-label">Balance (U)</div>
+                    </div>
+                    <div class="stat-item" id="botDailyItem">
+                        <div class="stat-value" id="botDailyPnl">-</div>
+                        <div class="stat-label">Daily PnL</div>
+                    </div>
+                    <div class="stat-item" id="botTotalItem">
+                        <div class="stat-value" id="botTotalPnl">-</div>
+                        <div class="stat-label">Total PnL</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="botWinRate">-</div>
+                        <div class="stat-label">Win Rate</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="botTrades">-</div>
+                        <div class="stat-label">Trades</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="botOpenPos">-</div>
+                        <div class="stat-label">Open Positions</div>
+                    </div>
+                </div>
+
+                <!-- Open positions table -->
+                <div id="botPositions" style="margin-bottom:14px"></div>
+
+                <!-- Recent closed trades -->
+                <div id="botClosedTrades" style="margin-bottom:14px"></div>
+
+                <!-- Bot logs -->
+                <div class="card-title" style="margin-top:8px;font-size:12px">Bot Logs</div>
+                <div class="log-box" id="botLogBox" style="max-height:180px"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Live Logs -->
     <div class="card full-width">
-        <div class="card-title">Live Logs</div>
+        <div class="card-title">Live Logs (Monitor)</div>
         <div class="log-box" id="logBox"></div>
     </div>
 
@@ -547,6 +645,162 @@ function renderResult(r, rank) {
     </div>`;
 }
 
+// ===== Trading Bot =====
+function fetchTrading() {
+    fetch('/api/trading')
+        .then(r => r.json())
+        .then(data => updateBotUI(data))
+        .catch(() => {});
+}
+
+function startBot() {
+    const balance = parseFloat(document.getElementById('botBalanceInput').value) || 100;
+    const btn = document.getElementById('botStartBtn');
+    btn.textContent = 'Starting...';
+    btn.disabled = true;
+    fetch('/api/trading/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({balance: balance})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            btn.textContent = 'Start Bot';
+            btn.disabled = false;
+            alert(data.error);
+        }
+        // UI will update on next poll
+    })
+    .catch(() => {
+        btn.textContent = 'Start Bot';
+        btn.disabled = false;
+    });
+}
+
+function updateBotUI(data) {
+    const badge = document.getElementById('botStatusBadge');
+    const offPanel = document.getElementById('botOffPanel');
+    const runPanel = document.getElementById('botRunPanel');
+
+    const hasData = data.enabled || (data.status && Object.keys(data.status).length > 0);
+
+    if (!hasData) {
+        badge.textContent = 'OFF';
+        badge.style.background = 'rgba(139,148,158,0.15)';
+        badge.style.color = '#8b949e';
+        offPanel.style.display = '';
+        runPanel.style.display = 'none';
+        return;
+    }
+
+    // Show running panel
+    offPanel.style.display = 'none';
+    runPanel.style.display = '';
+
+    const s = data.status;
+    if (data.enabled) {
+        badge.textContent = 'RUNNING';
+        badge.style.background = 'rgba(63,185,80,0.15)';
+        badge.style.color = '#3fb950';
+    } else {
+        badge.textContent = 'HISTORY';
+        badge.style.background = 'rgba(210,153,34,0.15)';
+        badge.style.color = '#d29922';
+    }
+
+    if (s.halted) {
+        badge.textContent = 'HALTED';
+        badge.style.background = 'rgba(248,81,73,0.15)';
+        badge.style.color = '#f85149';
+    }
+
+    // Stats
+    document.getElementById('botBalance').textContent = (s.balance || 0).toFixed(2);
+    const dailyEl = document.getElementById('botDailyPnl');
+    const dailyPnl = s.daily_pnl || 0;
+    dailyEl.textContent = (dailyPnl >= 0 ? '+' : '') + dailyPnl.toFixed(2) + 'U';
+    document.getElementById('botDailyItem').className = 'stat-item ' + (dailyPnl >= 0 ? 'stat-green' : 'stat-red');
+
+    const totalEl = document.getElementById('botTotalPnl');
+    const totalPnl = s.total_pnl || 0;
+    totalEl.textContent = (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2) + 'U (' + (s.total_pnl_pct || 0).toFixed(1) + '%)';
+    document.getElementById('botTotalItem').className = 'stat-item ' + (totalPnl >= 0 ? 'stat-green' : 'stat-red');
+
+    document.getElementById('botWinRate').textContent = (s.win_rate || 0) + '%';
+    document.getElementById('botTrades').textContent = s.total_trades || 0;
+    document.getElementById('botOpenPos').textContent = s.open_positions || 0;
+
+    // Halted banner
+    const posContainer = document.getElementById('botPositions');
+    let posHTML = '';
+    if (s.halted) {
+        posHTML += `<div class="halted-banner">HALTED: ${s.halt_reason}</div>`;
+    }
+
+    // Open positions table
+    const positions = data.open_positions || [];
+    if (positions.length > 0) {
+        posHTML += `<div style="font-size:12px;color:#8b949e;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Open Positions</div>
+        <table class="bot-table"><thead><tr>
+            <th>Symbol</th><th>Side</th><th>Strategy</th><th>Entry</th><th>TP</th><th>SL</th><th>Size</th><th>Score</th><th>Opened</th>
+        </tr></thead><tbody>`;
+        positions.forEach(p => {
+            const sideColor = p.side === 'BUY' ? '#3fb950' : '#f85149';
+            posHTML += `<tr>
+                <td style="font-weight:600;color:#58a6ff">${(p.symbol||'').replace('_USDT_PERP','')}</td>
+                <td style="color:${sideColor}">${p.side}</td>
+                <td>${p.strategy}</td>
+                <td>${p.entry_price}</td>
+                <td style="color:#3fb950">${p.tp_price}</td>
+                <td style="color:#f85149">${p.sl_price}</td>
+                <td>${p.size}U</td>
+                <td>${p.score}</td>
+                <td style="color:#8b949e">${p.opened_at||''}</td>
+            </tr>`;
+        });
+        posHTML += '</tbody></table>';
+    }
+    posContainer.innerHTML = posHTML;
+
+    // Closed trades table
+    const trades = (data.closed_trades || []).slice(-15).reverse();
+    const tradesContainer = document.getElementById('botClosedTrades');
+    if (trades.length > 0) {
+        let tHTML = `<div style="font-size:12px;color:#8b949e;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Recent Closed Trades</div>
+        <table class="bot-table"><thead><tr>
+            <th>Symbol</th><th>Side</th><th>Strategy</th><th>Entry</th><th>PnL</th><th>Closed</th>
+        </tr></thead><tbody>`;
+        trades.forEach(t => {
+            const pnl = t.pnl || 0;
+            const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+            const pnlStr = (pnl >= 0 ? '+' : '') + pnl.toFixed(4) + 'U';
+            tHTML += `<tr>
+                <td style="font-weight:600;color:#58a6ff">${(t.symbol||'').replace('_USDT_PERP','')}</td>
+                <td>${t.side}</td>
+                <td>${t.strategy}</td>
+                <td>${t.entry_price}</td>
+                <td class="${pnlClass}">${pnlStr}</td>
+                <td style="color:#8b949e">${t.closed_at||''}</td>
+            </tr>`;
+        });
+        tHTML += '</tbody></table>';
+        tradesContainer.innerHTML = tHTML;
+    } else {
+        tradesContainer.innerHTML = '';
+    }
+
+    // Bot logs
+    const botLogBox = document.getElementById('botLogBox');
+    if (data.logs && data.logs.length > 0) {
+        const wasAtBottom = botLogBox.scrollTop + botLogBox.clientHeight >= botLogBox.scrollHeight - 20;
+        botLogBox.innerHTML = data.logs.map(l =>
+            `<div class="log-line"><span class="log-time">${l.time}</span>${l.msg}</div>`
+        ).join('');
+        if (wasAtBottom) botLogBox.scrollTop = botLogBox.scrollHeight;
+    }
+}
+
 // Countdown
 setInterval(() => {
     const el = document.getElementById('countdown');
@@ -559,6 +813,7 @@ setInterval(() => {
 // Polling
 function poll() {
     fetchState();
+    fetchTrading();
     countdownVal = Math.round(REFRESH_INTERVAL / 1000);
     setTimeout(poll, REFRESH_INTERVAL);
 }
