@@ -553,6 +553,23 @@ def api_trading_start():
     return jsonify({"result": True, "balance": balance, "msg": f"Paper trading bot started with {balance}U"})
 
 
+@app.route("/api/trading/reset", methods=["POST"])
+def api_trading_reset():
+    """重置停機狀態，讓機器人繼續運行"""
+    global trading_risk_mgr
+    with trading_lock:
+        if not trading_state["enabled"]:
+            return jsonify({"error": "Bot not running"}), 400
+        if trading_risk_mgr:
+            trading_risk_mgr.halted = False
+            trading_risk_mgr.halt_reason = ""
+            trading_risk_mgr.consecutive_losses = 0
+            add_trading_log("手動重置停機狀態，機器人繼續運行")
+            _update_trading_state(trading_risk_mgr)
+            return jsonify({"result": True, "msg": "Bot reset, resuming trading"})
+    return jsonify({"error": "No risk manager found"}), 500
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="幣圈監控 Web 儀表板")

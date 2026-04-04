@@ -892,6 +892,17 @@ function fetchTrading() {
         .catch(() => {});
 }
 
+function resetBot() {
+    const btn = document.getElementById('botResetBtn');
+    if (btn) { btn.textContent = '重置中...'; btn.disabled = true; }
+    fetch('/api/trading/reset', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) alert(data.error);
+        })
+        .catch(() => {});
+}
+
 function startBot() {
     const balance = parseFloat(document.getElementById('botBalanceInput').value) || 100;
     const btn = document.getElementById('botStartBtn');
@@ -974,7 +985,12 @@ function updateBotUI(data) {
     const posContainer = document.getElementById('botPositions');
     let posHTML = '';
     if (s.halted) {
-        posHTML += `<div class="halted-banner">已停機: ${s.halt_reason}</div>`;
+        posHTML += `<div class="halted-banner">已停機: ${s.halt_reason}
+            <button onclick="resetBot()" id="botResetBtn"
+                style="margin-left:12px;padding:5px 16px;border-radius:6px;border:none;background:#238636;color:#fff;font-weight:600;cursor:pointer;font-size:12px">
+                重新啟動
+            </button>
+        </div>`;
     }
 
     // Open positions table
