@@ -133,7 +133,7 @@ def run_backtest(symbol, klines, hold_periods=None, rsi_short_thresh=70, rsi_lon
     max_hold = max(hold_periods)
 
     # 記錄每筆交易
-    trades = {hp: {"做空": [], "抄底": [], "追多": []} for hp in hold_periods}
+    trades = {hp: {"做空": [], "抄底": [], "追多": [], "做空(寬)": [], "抄底(寬)": []} for hp in hold_periods}
 
     for i in range(6, length - max_hold):
         ci = i + RSI_OFF
@@ -167,7 +167,7 @@ def run_backtest(symbol, klines, hold_periods=None, rsi_short_thresh=70, rsi_lon
         if ci >= 10 and ci < len(obv_vals):
             obv_d = 1 if obv_vals[ci] > obv_vals[ci - 10] else -1
 
-        # 做空
+        # 做空（嚴格版）
         if rsi_prev > rsi_short_thresh and rsi_cur < rsi_prev and macd_down and rsi_cur > 30:
             for hp in hold_periods:
                 exit_price = closes[ci + hp]
@@ -178,12 +178,34 @@ def run_backtest(symbol, klines, hold_periods=None, rsi_short_thresh=70, rsi_lon
                     "bb": bb_position, "obv": obv_d,
                 })
 
-        # 抄底
+        # 做空（寬鬆版：RSI 門檻 -5，去掉 rsi>30 限制）
+        if rsi_prev > (rsi_short_thresh - 5) and rsi_cur < rsi_prev and macd_down:
+            for hp in hold_periods:
+                exit_price = closes[ci + hp]
+                pnl_pct = (price - exit_price) / price * 100
+                trades[hp]["做空(寬)"].append({
+                    "entry": price, "exit": exit_price, "pnl_pct": pnl_pct,
+                    "rsi": rsi_cur, "mfi": mfi_cur, "regime": regime,
+                    "bb": bb_position, "obv": obv_d,
+                })
+
+        # 抄底（嚴格版）
         if rsi_prev < rsi_long_thresh and rsi_cur > rsi_prev and mfi_cur < 25 and macd_up:
             for hp in hold_periods:
                 exit_price = closes[ci + hp]
                 pnl_pct = (exit_price - price) / price * 100
                 trades[hp]["抄底"].append({
+                    "entry": price, "exit": exit_price, "pnl_pct": pnl_pct,
+                    "rsi": rsi_cur, "mfi": mfi_cur, "regime": regime,
+                    "bb": bb_position, "obv": obv_d,
+                })
+
+        # 抄底（寬鬆版：MFI < 35，RSI 門檻 +5）
+        if rsi_prev < (rsi_long_thresh + 5) and rsi_cur > rsi_prev and mfi_cur < 35 and macd_up:
+            for hp in hold_periods:
+                exit_price = closes[ci + hp]
+                pnl_pct = (exit_price - price) / price * 100
+                trades[hp]["抄底(寬)"].append({
                     "entry": price, "exit": exit_price, "pnl_pct": pnl_pct,
                     "rsi": rsi_cur, "mfi": mfi_cur, "regime": regime,
                     "bb": bb_position, "obv": obv_d,
@@ -240,10 +262,11 @@ def analyze_trades(all_trades):
 
             # 按 OBV 分組
             obv_stats = defaultdict(lambda: {"total": 0, "wins": 0})
+            base_strat = strat.replace("(寬)", "").strip() if "(寬)" in strat else strat
             for t in trades_list:
                 key = "confirmed" if (
-                    (strat == "做空" and t["obv"] == -1) or
-                    (strat in ("抄底", "追多") and t["obv"] == 1)
+                    (base_strat == "做空" and t["obv"] == -1) or
+                    (base_strat in ("抄底", "追多") and t["obv"] == 1)
                 ) else "divergent"
                 obv_stats[key]["total"] += 1
                 if t["pnl_pct"] > 0:

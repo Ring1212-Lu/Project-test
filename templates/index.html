@@ -747,6 +747,7 @@ function renderResult(r, rank) {
         </div>
         <div class="weight-bar-container">${weightBars}</div>
         <div style="font-size:11px;color:#8b949e;margin:8px 0 6px">${r.detail}</div>
+        <div style="font-size:11px;color:#d2a8ff;margin:0 0 6px">寬鬆版: ${r.relaxed_detail || '-'}</div>
         <div class="entry-exit">
             <div><div class="ee-label">進場價</div><div class="ee-value">${r.price}</div></div>
             <div><div class="ee-label">止盈 (+${r.tp_pct}%)</div><div class="ee-value ee-tp">${r.tp}</div></div>
@@ -866,9 +867,9 @@ function renderBacktestResults(data, container) {
         cardsHTML += `<div class="bt-hp-content" data-hp="${hp}" style="display:${display}">`;
         cardsHTML += `<div class="bt-summary">`;
 
-        const stratOrder = ['做空', '抄底', '追多'];
-        const stratColors = {'做空': '#f85149', '抄底': '#3fb950', '追多': '#d29922'};
-        const stratLabels = {'做空': '做空', '抄底': '抄底', '追多': '追多'};
+        const stratOrder = ['做空', '做空(寬)', '抄底', '抄底(寬)', '追多'];
+        const stratColors = {'做空': '#f85149', '做空(寬)': '#ff6b6b', '抄底': '#3fb950', '抄底(寬)': '#6bcf7f', '追多': '#d29922'};
+        const stratLabels = {'做空': '做空 (嚴格)', '做空(寬)': '做空 (寬鬆)', '抄底': '抄底 (嚴格)', '抄底(寬)': '抄底 (寬鬆)', '追多': '追多'};
 
         stratOrder.forEach(strat => {
             const r = strats[strat];

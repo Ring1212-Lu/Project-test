@@ -54,8 +54,8 @@ MAX_WORKERS = 3        # 並行執行緒數
 MAX_RETRIES = 3        # API 請求重試次數
 
 # ATR 倍數（自適應止盈止損）
-ATR_TP_MULT = {"做空": 2.0, "抄底": 2.5, "追多": 3.0}
-ATR_SL_MULT = {"做空": 1.2, "抄底": 1.5, "追多": 1.5}
+ATR_TP_MULT = {"做空": 2.0, "抄底": 2.5, "追多": 3.0, "做空(寬)": 2.0, "抄底(寬)": 2.5}
+ATR_SL_MULT = {"做空": 1.2, "抄底": 1.5, "追多": 1.5, "做空(寬)": 1.2, "抄底(寬)": 1.5}
 
 LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_data.json")
 
@@ -548,6 +548,8 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         "做空": {"win": 0, "total": 0, "vol_sum": 0},
         "抄底": {"win": 0, "total": 0, "vol_sum": 0},
         "追多": {"win": 0, "total": 0, "vol_sum": 0},
+        "做空(寬)": {"win": 0, "total": 0, "vol_sum": 0},
+        "抄底(寬)": {"win": 0, "total": 0, "vol_sum": 0},
     }
 
     for i in range(6, length - hold_period):
@@ -572,19 +574,33 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         except IndexError:
             vol = 1.0
 
-        # ---- 做空條件（使用優化閾值）----
+        # ---- 做空條件（嚴格版，使用優化閾值）----
         if rsi_prev > rsi_short_th and rsi_cur < rsi_prev and macd_down and rsi_cur > 30:
             stats["做空"]["total"] += 1
             stats["做空"]["vol_sum"] += vol
             if next_price < price:
                 stats["做空"]["win"] += 1
 
-        # ---- 抄底條件（使用優化閾值）----
+        # ---- 做空條件（寬鬆版：RSI 門檻 -5，去掉 rsi>30 限制）----
+        if rsi_prev > (rsi_short_th - 5) and rsi_cur < rsi_prev and macd_down:
+            stats["做空(寬)"]["total"] += 1
+            stats["做空(寬)"]["vol_sum"] += vol
+            if next_price < price:
+                stats["做空(寬)"]["win"] += 1
+
+        # ---- 抄底條件（嚴格版，使用優化閾值）----
         if rsi_prev < rsi_long_th and rsi_cur > rsi_prev and mfi_cur < 25 and macd_up:
             stats["抄底"]["total"] += 1
             stats["抄底"]["vol_sum"] += vol
             if next_price > price:
                 stats["抄底"]["win"] += 1
+
+        # ---- 抄底條件（寬鬆版：MFI < 35，RSI 門檻 +5）----
+        if rsi_prev < (rsi_long_th + 5) and rsi_cur > rsi_prev and mfi_cur < 35 and macd_up:
+            stats["抄底(寬)"]["total"] += 1
+            stats["抄底(寬)"]["vol_sum"] += vol
+            if next_price > price:
+                stats["抄底(寬)"]["win"] += 1
 
         # ---- 追多條件 ----
         # 連續上漲 + RSI 強勢區 + MACD 動能向上
@@ -602,25 +618,30 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
     strat_results = {}
     for strat, s in stats.items():
         r = rate(s["win"], s["total"])
-        weight = learner.get_weight(symbol, strat)
-        regime_bonus = learner.get_regime_bonus(regime, strat)
+        # 寬鬆版使用對應嚴格版的學習權重
+        base_strat = strat.replace("(寬)", "").strip() if "(寬)" in strat else strat
+        is_short = base_strat == "做空"
+        is_long = base_strat in ("抄底", "追多")
+
+        weight = learner.get_weight(symbol, base_strat)
+        regime_bonus = learner.get_regime_bonus(regime, base_strat)
 
         # 信心係數：樣本越多越高
         confidence = min(s["total"] / 10.0, 1.5) if s["total"] >= MIN_SIG else 0
 
         # OBV 確認加成
         obv_bonus = 1.0
-        if strat in ("抄底", "追多") and obv_dir == 1:
+        if is_long and obv_dir == 1:
             obv_bonus = 1.1  # 量能支持做多
-        elif strat == "做空" and obv_dir == -1:
+        elif is_short and obv_dir == -1:
             obv_bonus = 1.1  # 量能支持做空
-        elif strat in ("抄底", "追多") and obv_dir == -1:
+        elif is_long and obv_dir == -1:
             obv_bonus = 0.85  # 量價背離，降低信心
-        elif strat == "做空" and obv_dir == 1:
+        elif is_short and obv_dir == 1:
             obv_bonus = 0.85
 
         # 近期表現加權
-        recent_acc, recent_n = learner.get_recent_accuracy(symbol, strat)
+        recent_acc, recent_n = learner.get_recent_accuracy(symbol, base_strat)
         recent_bonus = 1.0
         if recent_acc is not None and recent_n >= 3:
             if recent_acc > 60:
@@ -629,46 +650,45 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
                 recent_bonus = 0.9
 
         # === 環境因子（用加法混合，避免連乘壓縮） ===
-        # 每個因子貢獻 -0.15 ~ +0.15，最後加總到基礎分數
         env_adjustment = 0.0
 
         # BTC 大盤
-        if strat in ("抄底", "追多") and btc_trend == -1:
+        if is_long and btc_trend == -1:
             env_adjustment -= 0.15   # 逆大盤做多
-        elif strat == "做空" and btc_trend == 1:
+        elif is_short and btc_trend == 1:
             env_adjustment -= 0.12   # 逆大盤做空
-        elif strat in ("抄底", "追多") and btc_trend == 1:
+        elif is_long and btc_trend == 1:
             env_adjustment += 0.10   # 順大盤做多
-        elif strat == "做空" and btc_trend == -1:
+        elif is_short and btc_trend == -1:
             env_adjustment += 0.10   # 順大盤做空
 
         # 多時間框架確認
-        if strat in ("抄底", "追多") and htf_trend == 1:
+        if is_long and htf_trend == 1:
             env_adjustment += 0.12   # HTF 確認做多
-        elif strat == "做空" and htf_trend == -1:
+        elif is_short and htf_trend == -1:
             env_adjustment += 0.12   # HTF 確認做空
-        elif strat in ("抄底", "追多") and htf_trend == -1:
+        elif is_long and htf_trend == -1:
             env_adjustment -= 0.10   # HTF 反向
-        elif strat == "做空" and htf_trend == 1:
+        elif is_short and htf_trend == 1:
             env_adjustment -= 0.10
 
         # RSI 背離（強信號，給較大加成）
-        if divergence == 1 and strat in ("抄底",):
+        if divergence == 1 and base_strat == "抄底":
             env_adjustment += 0.20   # 看漲背離 + 抄底
-        elif divergence == -1 and strat == "做空":
+        elif divergence == -1 and is_short:
             env_adjustment += 0.20   # 看跌背離 + 做空
-        elif divergence == 1 and strat == "做空":
+        elif divergence == 1 and is_short:
             env_adjustment -= 0.12   # 看漲背離做空
-        elif divergence == -1 and strat in ("抄底", "追多"):
+        elif divergence == -1 and is_long:
             env_adjustment -= 0.12   # 看跌背離做多
 
         # 支撐阻力位
         current_price = closes[-1]
-        if support and strat in ("抄底",):
+        if support and base_strat == "抄底":
             dist_to_support = abs(current_price - support) / current_price
             if dist_to_support < 0.005:
                 env_adjustment += 0.10
-        if resistance and strat == "做空":
+        if resistance and is_short:
             dist_to_resistance = abs(current_price - resistance) / current_price
             if dist_to_resistance < 0.005:
                 env_adjustment += 0.10
@@ -694,8 +714,9 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             "score": round(score, 1),
         }
 
-    # 過濾不足樣本
-    valid = {k: v for k, v in strat_results.items() if v["total"] >= MIN_SIG}
+    # 過濾不足樣本（交易用：只看嚴格版三個策略）
+    core_strats = {"做空", "抄底", "追多"}
+    valid = {k: v for k, v in strat_results.items() if v["total"] >= MIN_SIG and k in core_strats}
     if not valid:
         return None
 
@@ -735,12 +756,19 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         else:
             bb_pos = "mid-"
 
-    # 策略明細
+    # 策略明細（含寬鬆版比較）
     detail_parts = []
     for st in ["做空", "抄底", "追多"]:
         sr = strat_results[st]
         detail_parts.append(f"{st}{sr['rate']}%({sr['total']})")
     detail = " | ".join(detail_parts)
+
+    # 寬鬆版明細
+    relaxed_parts = []
+    for st in ["做空(寬)", "抄底(寬)"]:
+        sr = strat_results[st]
+        relaxed_parts.append(f"{st}{sr['rate']}%({sr['total']})")
+    relaxed_detail = " | ".join(relaxed_parts)
 
     # 信號強度等級
     score_val = best["score"]
@@ -800,6 +828,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         "env_detail":     best.get("env_detail", ""),
         "signal_strength": signal_strength,
         "detail":         detail,
+        "relaxed_detail":  relaxed_detail,
         "kelly_pct":      kelly_pct,
         # 進出場
         "tp":             tp_price,
