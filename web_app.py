@@ -48,18 +48,25 @@ def get_shared_tickers():
         _ticker_cache["time"] = time.time()
     return tickers
 
-# ===== LINE Notify =====
-LINE_NOTIFY_TOKEN = os.environ.get("LINE_NOTIFY_TOKEN", "")
+# ===== LINE Messaging API =====
+LINE_CHANNEL_TOKEN = os.environ.get("LINE_CHANNEL_TOKEN", "")
+LINE_USER_ID = os.environ.get("LINE_USER_ID", "")
 
-def send_line_notify(message):
-    """發送 LINE Notify 訊息"""
-    if not LINE_NOTIFY_TOKEN:
+def send_line_message(message):
+    """透過 LINE Messaging API 發送推播訊息"""
+    if not LINE_CHANNEL_TOKEN or not LINE_USER_ID:
         return
     try:
         req_lib.post(
-            "https://notify-api.line.me/api/notify",
-            headers={"Authorization": f"Bearer {LINE_NOTIFY_TOKEN}"},
-            data={"message": message},
+            "https://api.line.me/v2/bot/message/push",
+            headers={
+                "Authorization": f"Bearer {LINE_CHANNEL_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "to": LINE_USER_ID,
+                "messages": [{"type": "text", "text": message}],
+            },
             timeout=10,
         )
     except Exception:
@@ -71,7 +78,7 @@ def notify_strong_signals(results):
     strong = [r for r in results if r.get("signal_strength") == "STRONG"]
     if not strong:
         return
-    lines = [f"\n🔔 強訊號通知 ({len(strong)} 個)"]
+    lines = ["🔔 強訊號通知 ({} 個)".format(len(strong))]
     for r in strong[:5]:  # 最多通知 5 個
         sym = r["symbol"].replace("_USDT_PERP", "")
         lines.append(
@@ -79,7 +86,7 @@ def notify_strong_signals(results):
             f"分數:{r['best_score']} 勝率:{r['best_rate']}%\n"
             f"價格:{r['price']} TP:{r['tp']} SL:{r['sl']}"
         )
-    send_line_notify("\n".join(lines))
+    send_line_message("\n".join(lines))
 
 
 # 全域狀態
@@ -662,35 +669,41 @@ def api_trading_reset():
 
 @app.route("/api/line/setup", methods=["POST"])
 def api_line_setup():
-    """設定或測試 LINE Notify Token"""
-    global LINE_NOTIFY_TOKEN
+    """設定 LINE Messaging API 並發送測試訊息"""
+    global LINE_CHANNEL_TOKEN, LINE_USER_ID
     data = request.get_json(silent=True) or {}
-    token = data.get("token", "").strip()
-    if not token:
-        return jsonify({"error": "請提供 LINE Notify Token"}), 400
-    LINE_NOTIFY_TOKEN = token
+    channel_token = data.get("channel_token", "").strip()
+    user_id = data.get("user_id", "").strip()
+    if not channel_token or not user_id:
+        return jsonify({"error": "請提供 Channel Access Token 和 User ID"}), 400
     # 發送測試訊息
     try:
         resp = req_lib.post(
-            "https://notify-api.line.me/api/notify",
-            headers={"Authorization": f"Bearer {token}"},
-            data={"message": "\n✅ 幣圈監控 LINE 通知已連接成功！"},
+            "https://api.line.me/v2/bot/message/push",
+            headers={
+                "Authorization": f"Bearer {channel_token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "to": user_id,
+                "messages": [{"type": "text", "text": "✅ 幣圈監控 LINE 通知已連接成功！"}],
+            },
             timeout=10,
         )
         if resp.status_code == 200:
+            LINE_CHANNEL_TOKEN = channel_token
+            LINE_USER_ID = user_id
             return jsonify({"result": True, "msg": "LINE 通知設定成功，已發送測試訊息"})
         else:
-            LINE_NOTIFY_TOKEN = ""
-            return jsonify({"error": f"Token 無效 (HTTP {resp.status_code})"}), 400
+            return jsonify({"error": f"設定失敗 (HTTP {resp.status_code})，請確認 Token 和 User ID"}), 400
     except Exception as e:
-        LINE_NOTIFY_TOKEN = ""
         return jsonify({"error": f"連線失敗: {e}"}), 500
 
 
 @app.route("/api/line/status")
 def api_line_status():
-    """查詢 LINE Notify 是否已設定"""
-    return jsonify({"enabled": bool(LINE_NOTIFY_TOKEN)})
+    """查詢 LINE Messaging API 是否已設定"""
+    return jsonify({"enabled": bool(LINE_CHANNEL_TOKEN and LINE_USER_ID)})
 
 
 @app.route("/api/scan/restart", methods=["POST"])

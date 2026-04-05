@@ -562,14 +562,23 @@
     <!-- LINE 通知設定 -->
     <div class="card full-width">
         <div class="card-title">LINE 即時通知</div>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <span id="lineStatus" style="font-size:13px;color:#8b949e">檢查中...</span>
-            <input id="lineToken" type="password" placeholder="貼上 LINE Notify Token"
+        <div id="lineStatus" style="font-size:13px;color:#8b949e;margin-bottom:8px">檢查中...</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+            <label style="font-size:12px;color:#8b949e;min-width:120px">Channel Access Token</label>
+            <input id="lineChannelToken" type="password" placeholder="貼上 Channel Access Token"
+                   style="flex:1;min-width:200px;padding:6px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px">
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <label style="font-size:12px;color:#8b949e;min-width:120px">Your User ID</label>
+            <input id="lineUserId" type="text" placeholder="貼上你的 User ID"
                    style="flex:1;min-width:200px;padding:6px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px">
             <button onclick="setupLine()" style="padding:6px 16px;background:#238636;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">設定並測試</button>
         </div>
-        <p style="color:#8b949e;font-size:12px;margin-top:8px">
-            取得 Token：前往 <a href="https://notify-bot.line.me/my/" target="_blank" style="color:#58a6ff">LINE Notify</a> → 發行權杖 → 選擇聊天室 → 複製 Token。設定後有 STRONG 訊號會即時推播通知。
+        <p style="color:#8b949e;font-size:12px;margin-top:4px">
+            設定步驟：① 前往 <a href="https://developers.line.biz/console/" target="_blank" style="color:#58a6ff">LINE Developers</a> 建立 Messaging API Channel
+            ② 取得 Channel Access Token（在 Messaging API 頁籤）
+            ③ 取得 Your User ID（在 Basic settings 頁籤底部）
+            ④ 貼上後點「設定並測試」。設定後有 STRONG 訊號會即時推播通知。
         </p>
     </div>
 
@@ -1110,22 +1119,23 @@ setInterval(() => {
     }
 }, 1000);
 
-// LINE Notify
+// LINE Messaging API
 function checkLineStatus() {
     fetch('/api/line/status').then(r=>r.json()).then(d=>{
         const el = document.getElementById('lineStatus');
         if(d.enabled){
             el.innerHTML = '<span style="color:#3fb950">✓ 已連接</span> — STRONG 訊號將推播通知';
-            document.getElementById('lineToken').placeholder = '已設定（重新輸入可更換）';
         } else {
-            el.innerHTML = '<span style="color:#f85149">✗ 未設定</span> — 請輸入 Token 啟用通知';
+            el.innerHTML = '<span style="color:#f85149">✗ 未設定</span> — 請填入以下資訊啟用通知';
         }
     }).catch(()=>{});
 }
 function setupLine() {
-    const token = document.getElementById('lineToken').value.trim();
-    if(!token){ alert('請輸入 LINE Notify Token'); return; }
-    fetch('/api/line/setup', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token})})
+    const ct = document.getElementById('lineChannelToken').value.trim();
+    const uid = document.getElementById('lineUserId').value.trim();
+    if(!ct || !uid){ alert('請填入 Channel Access Token 和 User ID'); return; }
+    fetch('/api/line/setup', {method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({channel_token: ct, user_id: uid})})
     .then(r=>r.json()).then(d=>{
         if(d.result){ alert(d.msg); checkLineStatus(); }
         else alert(d.error || '設定失敗');
