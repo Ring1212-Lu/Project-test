@@ -96,7 +96,7 @@ state = {
     "top_performers": [],
     "logs": [],
 }
-state_lock = threading.Lock()
+state_lock = threading.RLock()  # RLock: 允許同一執行緒重複取鎖，避免死鎖
 
 # 交易機器人全域狀態
 trading_state = {
@@ -107,7 +107,7 @@ trading_state = {
     "closed_trades": [],
     "logs": [],
 }
-trading_lock = threading.Lock()
+trading_lock = threading.RLock()  # RLock: 避免死鎖
 trading_risk_mgr = None
 trading_client = None
 
