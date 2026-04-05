@@ -11,6 +11,7 @@ import os
 import json
 import threading
 import time
+import requests as req_lib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from flask import Flask, render_template, jsonify, request
@@ -46,6 +47,40 @@ def get_shared_tickers():
         _ticker_cache["data"] = tickers
         _ticker_cache["time"] = time.time()
     return tickers
+
+# ===== LINE Notify =====
+LINE_NOTIFY_TOKEN = os.environ.get("LINE_NOTIFY_TOKEN", "")
+
+def send_line_notify(message):
+    """發送 LINE Notify 訊息"""
+    if not LINE_NOTIFY_TOKEN:
+        return
+    try:
+        req_lib.post(
+            "https://notify-api.line.me/api/notify",
+            headers={"Authorization": f"Bearer {LINE_NOTIFY_TOKEN}"},
+            data={"message": message},
+            timeout=10,
+        )
+    except Exception:
+        pass  # 通知失敗不影響主流程
+
+
+def notify_strong_signals(results):
+    """掃描完成後，將 STRONG 訊號透過 LINE 通知"""
+    strong = [r for r in results if r.get("signal_strength") == "STRONG"]
+    if not strong:
+        return
+    lines = [f"\n🔔 強訊號通知 ({len(strong)} 個)"]
+    for r in strong[:5]:  # 最多通知 5 個
+        sym = r["symbol"].replace("_USDT_PERP", "")
+        lines.append(
+            f"\n{sym} | {r['best_strat']} | "
+            f"分數:{r['best_score']} 勝率:{r['best_rate']}%\n"
+            f"價格:{r['price']} TP:{r['tp']} SL:{r['sl']}"
+        )
+    send_line_notify("\n".join(lines))
+
 
 # 全域狀態
 state = {
@@ -397,6 +432,9 @@ def run_background_scan():
         results.sort(key=lambda x: x["best_score"], reverse=True)
         top = results[:TOP_N]
 
+        # LINE 通知強訊號
+        notify_strong_signals(top)
+
         # 記錄預測
         for r in top:
             learner.record_prediction(
@@ -620,6 +658,39 @@ def api_trading_reset():
             _update_trading_state(trading_risk_mgr)
             return jsonify({"result": True, "msg": "Bot reset, resuming trading"})
     return jsonify({"error": "No risk manager found"}), 500
+
+
+@app.route("/api/line/setup", methods=["POST"])
+def api_line_setup():
+    """設定或測試 LINE Notify Token"""
+    global LINE_NOTIFY_TOKEN
+    data = request.get_json(silent=True) or {}
+    token = data.get("token", "").strip()
+    if not token:
+        return jsonify({"error": "請提供 LINE Notify Token"}), 400
+    LINE_NOTIFY_TOKEN = token
+    # 發送測試訊息
+    try:
+        resp = req_lib.post(
+            "https://notify-api.line.me/api/notify",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "\n✅ 幣圈監控 LINE 通知已連接成功！"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return jsonify({"result": True, "msg": "LINE 通知設定成功，已發送測試訊息"})
+        else:
+            LINE_NOTIFY_TOKEN = ""
+            return jsonify({"error": f"Token 無效 (HTTP {resp.status_code})"}), 400
+    except Exception as e:
+        LINE_NOTIFY_TOKEN = ""
+        return jsonify({"error": f"連線失敗: {e}"}), 500
+
+
+@app.route("/api/line/status")
+def api_line_status():
+    """查詢 LINE Notify 是否已設定"""
+    return jsonify({"enabled": bool(LINE_NOTIFY_TOKEN)})
 
 
 @app.route("/api/scan/restart", methods=["POST"])
