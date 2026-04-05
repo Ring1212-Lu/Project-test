@@ -471,14 +471,22 @@
                 <div class="stat-label">等待中</div>
             </div>
         </div>
-        <div class="learn-grid" id="stratStats">
+        <div class="learn-grid" id="stratStats" style="grid-template-columns:repeat(5,1fr)">
             <div class="learn-item">
                 <div class="learn-strat" style="color:#f85149">做空</div>
                 <div class="learn-detail" id="stratShort">-</div>
             </div>
+            <div class="learn-item" style="border-left:2px solid #f8514944">
+                <div class="learn-strat" style="color:#ff6b6b;font-size:11px">做空(寬)</div>
+                <div class="learn-detail" id="stratShortR">-</div>
+            </div>
             <div class="learn-item">
                 <div class="learn-strat" style="color:#3fb950">抄底</div>
                 <div class="learn-detail" id="stratBottom">-</div>
+            </div>
+            <div class="learn-item" style="border-left:2px solid #3fb95044">
+                <div class="learn-strat" style="color:#6bcf7f;font-size:11px">抄底(寬)</div>
+                <div class="learn-detail" id="stratBottomR">-</div>
             </div>
             <div class="learn-item">
                 <div class="learn-strat" style="color:#d29922">追多</div>
@@ -659,7 +667,9 @@ function updateUI(data) {
         if (ls.strategy_stats) {
             const ss = ls.strategy_stats;
             document.getElementById('stratShort').innerHTML = formatStrat(ss['做空']);
+            document.getElementById('stratShortR').innerHTML = formatStrat(ss['做空(寬)']);
             document.getElementById('stratBottom').innerHTML = formatStrat(ss['抄底']);
+            document.getElementById('stratBottomR').innerHTML = formatStrat(ss['抄底(寬)']);
             document.getElementById('stratChase').innerHTML = formatStrat(ss['追多']);
         }
     }

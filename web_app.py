@@ -447,7 +447,7 @@ def run_background_scan():
             # Discord 通知強訊號
             notify_strong_signals(top)
 
-            # 記錄預測
+            # 記錄預測（嚴格版）
             for r in top:
                 learner.record_prediction(
                     symbol=r["symbol"],
@@ -460,13 +460,42 @@ def run_background_scan():
                     regime=r["regime"],
                 )
 
+            # 記錄寬鬆版預測（用於 A/B 比較）
+            for r in results:
+                all_strats = r.get("all_strats", {})
+                for relaxed_name in ["做空(寬)", "抄底(寬)"]:
+                    rs = all_strats.get(relaxed_name)
+                    if rs and rs["total"] >= 3 and rs["score"] > 0:
+                        base = relaxed_name.replace("(寬)", "").strip()
+                        is_short = (base == "做空")
+                        price = r["price"]
+                        atr = r.get("atr", price * 0.02)
+                        tp_mult = 2.0 if is_short else 2.5
+                        sl_mult = 1.2 if is_short else 1.5
+                        if is_short:
+                            tp_p = round(price - atr * tp_mult, 6)
+                            sl_p = round(price + atr * sl_mult, 6)
+                        else:
+                            tp_p = round(price + atr * tp_mult, 6)
+                            sl_p = round(price - atr * sl_mult, 6)
+                        learner.record_prediction(
+                            symbol=r["symbol"],
+                            strategy=relaxed_name,
+                            entry_price=price,
+                            tp_price=tp_p,
+                            sl_price=sl_p,
+                            rate=rs["rate"],
+                            score=rs["score"],
+                            regime=r["regime"],
+                        )
+
             # 學習統計
             stats = learner.data["stats"]
             decided = stats["total_wins"] + stats["total_losses"]
             overall_rate = round(stats["total_wins"] / decided * 100, 1) if decided > 0 else 0
 
             strat_stats = {}
-            for strat in ["做空", "抄底", "追多"]:
+            for strat in ["做空", "抄底", "追多", "做空(寬)", "抄底(寬)"]:
                 s = stats["strategy_stats"].get(strat, {"wins": 0, "losses": 0, "expired": 0})
                 sw, sl_count = s["wins"], s["losses"]
                 st = sw + sl_count

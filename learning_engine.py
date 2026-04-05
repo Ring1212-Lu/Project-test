@@ -107,6 +107,8 @@ class LearningEngine:
                     "做空": {"wins": 0, "losses": 0, "expired": 0},
                     "抄底": {"wins": 0, "losses": 0, "expired": 0},
                     "追多": {"wins": 0, "losses": 0, "expired": 0},
+                    "做空(寬)": {"wins": 0, "losses": 0, "expired": 0},
+                    "抄底(寬)": {"wins": 0, "losses": 0, "expired": 0},
                 },
                 "regime_stats": {},  # {regime: {strategy: {wins, losses}}}
             },
@@ -295,7 +297,8 @@ class LearningEngine:
         sl    = pred["sl_price"]
         strat = pred["strategy"]
 
-        if strat == "做空":
+        is_short = "做空" in strat
+        if is_short:
             if current_price <= tp:
                 return True
             if current_price >= sl:
@@ -309,7 +312,7 @@ class LearningEngine:
         # 15 分鐘後用方向 + 幅度判定
         if age > 900:
             pnl_pct = (current_price - entry) / entry if entry > 0 else 0
-            if strat == "做空":
+            if is_short:
                 pnl_pct = -pnl_pct  # 做空盈虧反轉
 
             # 需要至少 0.1% 的明確方向才判定
