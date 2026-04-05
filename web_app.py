@@ -356,131 +356,131 @@ def run_background_scan():
             # 抓行情
             add_log("正在抓取全市場行情...")
             tickers = get_shared_tickers()
-        perps = []
-        for t in tickers:
-            sym = t.get("symbol", "")
-            if not sym.endswith("_USDT_PERP"):
-                continue
-            try:
-                o = float(t.get("open", 0))
-                c = float(t.get("close", 0))
-                vol = float(t.get("amount", 0))
-                if o <= 0 or c <= 0 or vol < 5000:
+            perps = []
+            for t in tickers:
+                sym = t.get("symbol", "")
+                if not sym.endswith("_USDT_PERP"):
                     continue
-                change = (c - o) / o * 100
-                perps.append({"symbol": sym, "change": change, "price": c})
-            except (ValueError, ZeroDivisionError):
+                try:
+                    o = float(t.get("open", 0))
+                    c = float(t.get("close", 0))
+                    vol = float(t.get("amount", 0))
+                    if o <= 0 or c <= 0 or vol < 5000:
+                        continue
+                    change = (c - o) / o * 100
+                    perps.append({"symbol": sym, "change": change, "price": c})
+                except (ValueError, ZeroDivisionError):
+                    continue
+
+            if not perps:
+                add_log("無法取得行情資料")
+                with state_lock:
+                    state["status"] = "waiting"
+                time.sleep(INTERVAL)
                 continue
 
-        if not perps:
-            add_log("無法取得行情資料")
+            perps.sort(key=lambda x: x["change"], reverse=True)
+            n15 = max(1, int(len(perps) * TOP15_PCT))
+            gainers = perps[:n15][:TOP15_MAX]
+            losers = list(reversed(perps[-n15:]))[:TOP15_MAX]
+            pool = gainers + losers
+
+            seen = set()
+            unique_pool = []
+            for coin in pool:
+                if coin["symbol"] not in seen:
+                    seen.add(coin["symbol"])
+                    unique_pool.append(coin)
+            pool = unique_pool
+
             with state_lock:
-                state["status"] = "waiting"
-            time.sleep(INTERVAL)
-            continue
+                state["total_perps"] = len(perps)
+                state["pool_size"] = len(pool)
+                state["gainer_top"] = gainers[0] if gainers else None
+                state["loser_top"] = losers[0] if losers else None
 
-        perps.sort(key=lambda x: x["change"], reverse=True)
-        n15 = max(1, int(len(perps) * TOP15_PCT))
-        gainers = perps[:n15][:TOP15_MAX]
-        losers = list(reversed(perps[-n15:]))[:TOP15_MAX]
-        pool = gainers + losers
+            add_log(f"共 {len(perps)} 個合約，分析池 {len(pool)} 個")
 
-        seen = set()
-        unique_pool = []
-        for coin in pool:
-            if coin["symbol"] not in seen:
-                seen.add(coin["symbol"])
-                unique_pool.append(coin)
-        pool = unique_pool
+            # 並行分析
+            add_log(f"並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒）...")
+            t_start = time.time()
+            results = []
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                future_map = {
+                    executor.submit(fetch_and_analyze, coin, learner): coin
+                    for coin in pool
+                }
+                for future in as_completed(future_map):
+                    coin = future_map[future]
+                    try:
+                        res = future.result()
+                        if res:
+                            results.append(res)
+                    except Exception:
+                        pass
+            elapsed = round(time.time() - t_start, 1)
+            add_log(f"分析完成，耗時 {elapsed} 秒")
 
-        with state_lock:
-            state["total_perps"] = len(perps)
-            state["pool_size"] = len(pool)
-            state["gainer_top"] = gainers[0] if gainers else None
-            state["loser_top"] = losers[0] if losers else None
+            if not results:
+                add_log("本輪無足夠樣本的幣種")
+                with state_lock:
+                    state["status"] = "waiting"
+                time.sleep(INTERVAL)
+                continue
 
-        add_log(f"共 {len(perps)} 個合約，分析池 {len(pool)} 個")
+            results.sort(key=lambda x: x["best_score"], reverse=True)
+            top = results[:TOP_N]
 
-        # 並行分析
-        add_log(f"並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒）...")
-        t_start = time.time()
-        results = []
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            future_map = {
-                executor.submit(fetch_and_analyze, coin, learner): coin
-                for coin in pool
-            }
-            for future in as_completed(future_map):
-                coin = future_map[future]
-                try:
-                    res = future.result()
-                    if res:
-                        results.append(res)
-                except Exception:
-                    pass
-        elapsed = round(time.time() - t_start, 1)
-        add_log(f"分析完成，耗時 {elapsed} 秒")
+            # Discord 通知強訊號
+            notify_strong_signals(top)
 
-        if not results:
-            add_log("本輪無足夠樣本的幣種")
+            # 記錄預測
+            for r in top:
+                learner.record_prediction(
+                    symbol=r["symbol"],
+                    strategy=r["best_strat"],
+                    entry_price=r["price"],
+                    tp_price=r["tp"],
+                    sl_price=r["sl"],
+                    rate=r["best_rate"],
+                    score=r["best_score"],
+                    regime=r["regime"],
+                )
+
+            # 學習統計
+            stats = learner.data["stats"]
+            decided = stats["total_wins"] + stats["total_losses"]
+            overall_rate = round(stats["total_wins"] / decided * 100, 1) if decided > 0 else 0
+
+            strat_stats = {}
+            for strat in ["做空", "抄底", "追多"]:
+                s = stats["strategy_stats"].get(strat, {"wins": 0, "losses": 0, "expired": 0})
+                sw, sl_count = s["wins"], s["losses"]
+                st = sw + sl_count
+                sr = round(sw / st * 100, 1) if st > 0 else 0
+                strat_stats[strat] = {"wins": sw, "losses": sl_count, "rate": sr}
+
+            # 更新全域狀態
             with state_lock:
+                state["top_results"] = top
+                state["all_results"] = results
+                state["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 state["status"] = "waiting"
-            time.sleep(INTERVAL)
-            continue
+                state["learn_stats"] = {
+                    "total_predictions": stats["total_predictions"],
+                    "total_validations": stats["total_validations"],
+                    "total_wins": stats["total_wins"],
+                    "total_losses": stats["total_losses"],
+                    "total_expired": stats["total_expired"],
+                    "overall_rate": overall_rate,
+                    "pending": len(learner.data["pending"]),
+                    "weights_count": len(learner.data["weights"]),
+                    "strategy_stats": strat_stats,
+                }
+                state["top_performers"] = learner.get_top_performers(5)
 
-        results.sort(key=lambda x: x["best_score"], reverse=True)
-        top = results[:TOP_N]
-
-        # LINE 通知強訊號
-        notify_strong_signals(top)
-
-        # 記錄預測
-        for r in top:
-            learner.record_prediction(
-                symbol=r["symbol"],
-                strategy=r["best_strat"],
-                entry_price=r["price"],
-                tp_price=r["tp"],
-                sl_price=r["sl"],
-                rate=r["best_rate"],
-                score=r["best_score"],
-                regime=r["regime"],
-            )
-
-        # 學習統計
-        stats = learner.data["stats"]
-        decided = stats["total_wins"] + stats["total_losses"]
-        overall_rate = round(stats["total_wins"] / decided * 100, 1) if decided > 0 else 0
-
-        strat_stats = {}
-        for strat in ["做空", "抄底", "追多"]:
-            s = stats["strategy_stats"].get(strat, {"wins": 0, "losses": 0, "expired": 0})
-            sw, sl_count = s["wins"], s["losses"]
-            st = sw + sl_count
-            sr = round(sw / st * 100, 1) if st > 0 else 0
-            strat_stats[strat] = {"wins": sw, "losses": sl_count, "rate": sr}
-
-        # 更新全域狀態
-        with state_lock:
-            state["top_results"] = top
-            state["all_results"] = results
-            state["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            state["status"] = "waiting"
-            state["learn_stats"] = {
-                "total_predictions": stats["total_predictions"],
-                "total_validations": stats["total_validations"],
-                "total_wins": stats["total_wins"],
-                "total_losses": stats["total_losses"],
-                "total_expired": stats["total_expired"],
-                "overall_rate": overall_rate,
-                "pending": len(learner.data["pending"]),
-                "weights_count": len(learner.data["weights"]),
-                "strategy_stats": strat_stats,
-            }
-            state["top_performers"] = learner.get_top_performers(5)
-
-            add_log(f"第 {round_num} 輪完成，共 {len(results)} 個有效幣種，前 {len(top)} 名已更新")
-            consecutive_errors = 0  # 重置錯誤計數
+                add_log(f"第 {round_num} 輪完成，共 {len(results)} 個有效幣種，前 {len(top)} 名已更新")
+                consecutive_errors = 0  # 重置錯誤計數
 
         except Exception as e:
             consecutive_errors += 1
