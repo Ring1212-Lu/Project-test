@@ -332,13 +332,19 @@ scan_should_restart = threading.Event()
 
 def run_background_scan():
     """背景掃描執行緒（帶錯誤保護）"""
-    learner = LearningEngine(LEARNING_FILE)
+    print("[SCAN] 背景掃描執行緒啟動")
+    try:
+        learner = LearningEngine(LEARNING_FILE)
+    except Exception as e:
+        print(f"[SCAN] LearningEngine 初始化失敗: {e}")
+        return
     round_num = 0
     consecutive_errors = 0
 
     while True:
         try:
             round_num += 1
+            print(f"[SCAN] === 第 {round_num} 輪掃描開始 ===")
             with state_lock:
                 state["round"] = round_num
                 state["status"] = "scanning"
@@ -372,7 +378,9 @@ def run_background_scan():
                 except (ValueError, ZeroDivisionError):
                     continue
 
+            print(f"[SCAN] tickers: {len(tickers)} 個, perps: {len(perps)} 個")
             if not perps:
+                print("[SCAN] 無 perps，跳過本輪")
                 add_log("無法取得行情資料")
                 with state_lock:
                     state["status"] = "waiting"
@@ -466,7 +474,7 @@ def run_background_scan():
                 strat_stats[strat] = {"wins": sw, "losses": sl_count, "rate": sr}
 
             # 更新全域狀態
-            add_log(f"準備更新儀表板：{len(top)} 個推薦，{len(results)} 個有效結果")
+            print(f"[SCAN] 準備更新儀表板：{len(top)} 個推薦，{len(results)} 個有效結果")
             with state_lock:
                 state["top_results"] = top
                 state["all_results"] = results
@@ -491,6 +499,9 @@ def run_background_scan():
         except Exception as e:
             consecutive_errors += 1
             err_msg = f"掃描出錯: {type(e).__name__}: {e}"
+            import traceback
+            print(f"[SCAN ERROR] {err_msg}")
+            traceback.print_exc()
             add_log(f"[ERROR] {err_msg}")
 
             if consecutive_errors >= 3:
