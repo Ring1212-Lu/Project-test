@@ -756,8 +756,8 @@ function renderResult(r, rank) {
             <span class="label">勝率</span><span class="value">${r.best_rate}% (${r.best_total}次)</span>
         </div>
         <div class="weight-bar-container">${weightBars}</div>
-        <div style="font-size:11px;color:#8b949e;margin:8px 0 6px">${r.detail}</div>
-        <div style="font-size:11px;color:#d2a8ff;margin:0 0 6px">寬鬆版: ${r.relaxed_detail || '-'}</div>
+        <div style="font-size:13px;color:#c9d1d9;margin:8px 0 6px;font-weight:500">${r.detail}</div>
+        <div style="font-size:13px;color:#d2a8ff;margin:0 0 6px;font-weight:500">寬鬆版: ${r.relaxed_detail || '-'}</div>
         <div class="entry-exit">
             <div><div class="ee-label">進場價</div><div class="ee-value">${r.price}</div></div>
             <div><div class="ee-label">止盈 (+${r.tp_pct}%)</div><div class="ee-value ee-tp">${r.tp}</div></div>
