@@ -603,6 +603,7 @@ function fetchState() {
 }
 
 function updateUI(data) {
+  try {
     // Status
     const dot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
@@ -635,8 +636,13 @@ function updateUI(data) {
     // Top results
     const container = document.getElementById('topResults');
     if (data.top_results && data.top_results.length > 0) {
-        container.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;">' +
-            data.top_results.map((r, i) => renderResult(r, i)).join('') + '</div>';
+        try {
+            container.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;">' +
+                data.top_results.map((r, i) => renderResult(r, i)).join('') + '</div>';
+        } catch(e) {
+            console.error('renderResult error:', e, data.top_results);
+            container.innerHTML = '<p style="color:#f85149">渲染推薦結果出錯，請查看 Console</p>';
+        }
     }
 
     // Learning stats
@@ -675,6 +681,7 @@ function updateUI(data) {
         ).join('');
         if (wasAtBottom) logBox.scrollTop = logBox.scrollHeight;
     }
+  } catch(e) { console.error('updateUI error:', e); }
 }
 
 function formatStrat(s) {
@@ -683,10 +690,11 @@ function formatStrat(s) {
 }
 
 function renderResult(r, rank) {
-    const medals = ['1st', '2nd', '3rd'];
     const medalIcons = ['&#x1F947;', '&#x1F948;', '&#x1F949;'];
-    const chgClass = r.change24h >= 0 ? 'change-up' : 'change-down';
-    const chgStr = r.change24h >= 0 ? '+' + r.change24h.toFixed(2) + '%' : r.change24h.toFixed(2) + '%';
+    const medalIcon = medalIcons[rank] || `#${rank+1}`;
+    const chg = parseFloat(r.change24h) || 0;
+    const chgClass = chg >= 0 ? 'change-up' : 'change-down';
+    const chgStr = chg >= 0 ? '+' + chg.toFixed(2) + '%' : chg.toFixed(2) + '%';
 
     let stratClass = 'strat-long';
     let stratLabel = r.best_strat;
@@ -701,10 +709,10 @@ function renderResult(r, rank) {
         {label: '趨勢', val: r.regime_bonus, max: 1.5, color: '#3fb950'},
         {label: 'OBV', val: r.obv_bonus, max: 1.2, color: '#d29922'},
         {label: '近期', val: r.recent_bonus, max: 1.2, color: '#bc8cff'},
-        {label: '信心', val: r.confidence, max: 1.5, color: '#f0883e'},
+        {label: '信心', val: parseFloat(r.confidence) || 0, max: 1.5, color: '#f0883e'},
     ];
     const weightBars = weights.map(w => {
-        const pct = Math.min((w.val / w.max) * 100, 100);
+        const pct = Math.min((parseFloat(w.val) || 0) / w.max * 100, 100);
         return `<div class="weight-row">
             <span class="weight-label">${w.label}</span>
             <div class="weight-bar"><div class="weight-fill" style="width:${pct}%;background:${w.color}"></div></div>
@@ -715,7 +723,7 @@ function renderResult(r, rank) {
     return `<div class="result-card rank-${rank+1}">
         <div class="result-header">
             <div>
-                <span class="result-medal">${medalIcons[rank]}</span>
+                <span class="result-medal">${medalIcon}</span>
                 <span class="result-symbol">${r.symbol.replace('_USDT_PERP','')}</span>
             </div>
             <span class="result-change ${chgClass}">${chgStr}</span>
