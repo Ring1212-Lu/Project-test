@@ -48,8 +48,8 @@ TICK_URL   = "https://fapi.binance.com/fapi/v1/ticker/24hr"
 INTERVAL   = 120       # 秒，每輪間隔（2分鐘）
 TOP_N      = 3         # 最終回報前幾名
 MIN_SIG    = 3         # 最低訊號次數門檻
-TOP15_PCT  = 0.10      # 每側（漲/跌）取百分比
-TOP15_MAX  = 8         # 每側最多取幾個
+TOP15_PCT  = 0.15      # 每側（漲/跌）取百分比
+TOP15_MAX  = 12        # 每側最多取幾個
 MAX_WORKERS = 3        # 並行執行緒數
 MAX_RETRIES = 3        # API 請求重試次數
 
