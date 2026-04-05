@@ -17,7 +17,7 @@ from datetime import datetime
 from flask import Flask, render_template, jsonify, request
 
 from crypto_monitor_v2 import (
-    fetch_tickers, fetch_and_analyze, analyze,
+    fetch_tickers, fetch_and_analyze, analyze, get_btc_trend,
     TOP15_PCT, TOP15_MAX, TOP_N, INTERVAL, MAX_WORKERS
 )
 from learning_engine import LearningEngine
@@ -401,13 +401,18 @@ def run_background_scan():
 
             add_log(f"共 {len(perps)} 個合約，分析池 {len(pool)} 個")
 
+            # BTC 大盤趨勢
+            btc_trend = get_btc_trend()
+            btc_str = {1: "UP", -1: "DOWN", 0: "NEUTRAL"}.get(btc_trend, "?")
+            add_log(f"BTC 大盤趨勢: {btc_str}")
+
             # 並行分析
             add_log(f"並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒）...")
             t_start = time.time()
             results = []
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 future_map = {
-                    executor.submit(fetch_and_analyze, coin, learner): coin
+                    executor.submit(fetch_and_analyze, coin, learner, None, btc_trend): coin
                     for coin in pool
                 }
                 for future in as_completed(future_map):
