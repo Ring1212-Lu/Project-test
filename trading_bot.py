@@ -63,7 +63,7 @@ class RiskManager:
         self.max_position_pct = config.get("max_position_pct", 20) # 單次最大倉位 %
         self.max_positions = config.get("max_positions", 2)        # 最大同時持倉
         self.max_consecutive_loss = config.get("max_consecutive_loss", 3)
-        self.min_signal_strength = config.get("min_signal_strength", "STRONG")
+        self.min_signal_strength = config.get("min_signal_strength", "MEDIUM")
         self.min_score = config.get("min_score", 60)
         self.min_win_rate = config.get("min_win_rate", 55)
         self.min_rr = config.get("min_rr", 1.3)

@@ -148,7 +148,7 @@ def run_trading_bot(initial_balance=100):
         "max_position_pct": 20,
         "max_positions": 2,
         "max_consecutive_loss": 3,
-        "min_signal_strength": "STRONG",
+        "min_signal_strength": "MEDIUM",
         "min_score": 60,
         "min_win_rate": 55,
         "min_rr": 1.3,
