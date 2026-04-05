@@ -770,19 +770,20 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         else:
             bb_pos = "mid-"
 
-    # 策略明細（含寬鬆版比較）
+    # 策略明細（嚴格版）
     detail_parts = []
     for st in ["做空", "抄底", "追多"]:
         sr = strat_results[st]
         detail_parts.append(f"{st}{sr['rate']}%({sr['total']})")
     detail = " | ".join(detail_parts)
 
-    # 寬鬆版明細
-    relaxed_parts = []
-    for st in ["做空(寬)", "抄底(寬)"]:
-        sr = strat_results[st]
-        relaxed_parts.append(f"{st}{sr['rate']}%({sr['total']})")
-    relaxed_detail = " | ".join(relaxed_parts)
+    # 寬鬆版明細（相同順序：做空、抄底、追多，方便垂直比較）
+    sr_short_r = strat_results["做空(寬)"]
+    sr_bottom_r = strat_results["抄底(寬)"]
+    sr_chase = strat_results["追多"]
+    relaxed_detail = (f"做空{sr_short_r['rate']}%({sr_short_r['total']}) | "
+                      f"抄底{sr_bottom_r['rate']}%({sr_bottom_r['total']}) | "
+                      f"追多{sr_chase['rate']}%({sr_chase['total']})")
 
     # 信號強度等級
     score_val = best["score"]
