@@ -602,12 +602,12 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             if next_price > price:
                 stats["抄底(寬)"]["win"] += 1
 
-        # ---- 追多條件（加嚴：需 OBV 上升 + MFI > 40 確認買壓）----
+        # ---- 追多條件（加嚴：需 OBV 上升確認量能）----
         obv_rising = (ci >= 5 and ci < len(obv_vals) and
                       obv_vals[ci] > obv_vals[ci - 5])
         if (closes[ci] > closes[ci - 1] > closes[ci - 2]
                 and 60 < rsi_cur < 80 and macd_up
-                and mfi_cur > 40 and obv_rising):
+                and mfi_cur > 30 and obv_rising):
             stats["追多"]["total"] += 1
             stats["追多"]["vol_sum"] += vol
             if next_price > price:
