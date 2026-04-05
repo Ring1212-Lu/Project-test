@@ -48,25 +48,17 @@ def get_shared_tickers():
         _ticker_cache["time"] = time.time()
     return tickers
 
-# ===== LINE Messaging API =====
-LINE_CHANNEL_TOKEN = os.environ.get("LINE_CHANNEL_TOKEN", "")
-LINE_USER_ID = os.environ.get("LINE_USER_ID", "")
+# ===== Discord Webhook 通知 =====
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 
-def send_line_message(message):
-    """透過 LINE Messaging API 發送推播訊息"""
-    if not LINE_CHANNEL_TOKEN or not LINE_USER_ID:
+def send_discord_message(message):
+    """透過 Discord Webhook 發送訊息"""
+    if not DISCORD_WEBHOOK_URL:
         return
     try:
         req_lib.post(
-            "https://api.line.me/v2/bot/message/push",
-            headers={
-                "Authorization": f"Bearer {LINE_CHANNEL_TOKEN}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "to": LINE_USER_ID,
-                "messages": [{"type": "text", "text": message}],
-            },
+            DISCORD_WEBHOOK_URL,
+            json={"content": message},
             timeout=10,
         )
     except Exception:
@@ -74,19 +66,19 @@ def send_line_message(message):
 
 
 def notify_strong_signals(results):
-    """掃描完成後，將 STRONG 訊號透過 LINE 通知"""
+    """掃描完成後，將 STRONG 訊號透過 Discord 通知"""
     strong = [r for r in results if r.get("signal_strength") == "STRONG"]
     if not strong:
         return
-    lines = ["🔔 強訊號通知 ({} 個)".format(len(strong))]
+    lines = ["🔔 **強訊號通知 ({} 個)**".format(len(strong))]
     for r in strong[:5]:  # 最多通知 5 個
         sym = r["symbol"].replace("_USDT_PERP", "")
         lines.append(
-            f"\n{sym} | {r['best_strat']} | "
+            f"```\n{sym} | {r['best_strat']} | "
             f"分數:{r['best_score']} 勝率:{r['best_rate']}%\n"
-            f"價格:{r['price']} TP:{r['tp']} SL:{r['sl']}"
+            f"價格:{r['price']}  TP:{r['tp']}  SL:{r['sl']}\n```"
         )
-    send_line_message("\n".join(lines))
+    send_discord_message("\n".join(lines))
 
 
 # 全域狀態
@@ -667,43 +659,34 @@ def api_trading_reset():
     return jsonify({"error": "No risk manager found"}), 500
 
 
-@app.route("/api/line/setup", methods=["POST"])
-def api_line_setup():
-    """設定 LINE Messaging API 並發送測試訊息"""
-    global LINE_CHANNEL_TOKEN, LINE_USER_ID
+@app.route("/api/discord/setup", methods=["POST"])
+def api_discord_setup():
+    """設定 Discord Webhook 並發送測試訊息"""
+    global DISCORD_WEBHOOK_URL
     data = request.get_json(silent=True) or {}
-    channel_token = data.get("channel_token", "").strip()
-    user_id = data.get("user_id", "").strip()
-    if not channel_token or not user_id:
-        return jsonify({"error": "請提供 Channel Access Token 和 User ID"}), 400
+    webhook_url = data.get("webhook_url", "").strip()
+    if not webhook_url:
+        return jsonify({"error": "請提供 Discord Webhook URL"}), 400
     # 發送測試訊息
     try:
         resp = req_lib.post(
-            "https://api.line.me/v2/bot/message/push",
-            headers={
-                "Authorization": f"Bearer {channel_token}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "to": user_id,
-                "messages": [{"type": "text", "text": "✅ 幣圈監控 LINE 通知已連接成功！"}],
-            },
+            webhook_url,
+            json={"content": "✅ 幣圈監控 Discord 通知已連接成功！"},
             timeout=10,
         )
-        if resp.status_code == 200:
-            LINE_CHANNEL_TOKEN = channel_token
-            LINE_USER_ID = user_id
-            return jsonify({"result": True, "msg": "LINE 通知設定成功，已發送測試訊息"})
+        if resp.status_code == 204:
+            DISCORD_WEBHOOK_URL = webhook_url
+            return jsonify({"result": True, "msg": "Discord 通知設定成功，已發送測試訊息"})
         else:
-            return jsonify({"error": f"設定失敗 (HTTP {resp.status_code})，請確認 Token 和 User ID"}), 400
+            return jsonify({"error": f"Webhook 無效 (HTTP {resp.status_code})"}), 400
     except Exception as e:
         return jsonify({"error": f"連線失敗: {e}"}), 500
 
 
-@app.route("/api/line/status")
-def api_line_status():
-    """查詢 LINE Messaging API 是否已設定"""
-    return jsonify({"enabled": bool(LINE_CHANNEL_TOKEN and LINE_USER_ID)})
+@app.route("/api/discord/status")
+def api_discord_status():
+    """查詢 Discord Webhook 是否已設定"""
+    return jsonify({"enabled": bool(DISCORD_WEBHOOK_URL)})
 
 
 @app.route("/api/scan/restart", methods=["POST"])
