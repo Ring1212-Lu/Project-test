@@ -184,6 +184,15 @@ class LearningEngine:
         """取得市場狀態對策略的加成"""
         return self.REGIME_BONUS.get(regime, {}).get(strategy, 1.0)
 
+    def get_global_strat_winrate(self, strategy):
+        """取得策略的全局歷史勝率，回傳 (win_rate, total_trades)"""
+        base = strategy.replace("(寬)", "").strip() if "(寬)" in strategy else strategy
+        ss = self.data["stats"]["strategy_stats"].get(base, {"wins": 0, "losses": 0})
+        total = ss["wins"] + ss["losses"]
+        if total < 10:
+            return None, total  # 數據不足，不做調整
+        return round(ss["wins"] / total * 100, 1), total
+
     def _update_weight(self, symbol, strategy, win):
         """更新權重"""
         key = self._weight_key(symbol, strategy)

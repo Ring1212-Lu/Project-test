@@ -602,10 +602,12 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             if next_price > price:
                 stats["抄底(寬)"]["win"] += 1
 
-        # ---- 追多條件 ----
-        # 連續上漲 + RSI 強勢區 + MACD 動能向上
+        # ---- 追多條件（加嚴：需 OBV 上升 + MFI > 40 確認買壓）----
+        obv_rising = (ci >= 5 and ci < len(obv_vals) and
+                      obv_vals[ci] > obv_vals[ci - 5])
         if (closes[ci] > closes[ci - 1] > closes[ci - 2]
-                and 60 < rsi_cur < 85 and macd_up):
+                and 60 < rsi_cur < 80 and macd_up
+                and mfi_cur > 40 and obv_rising):
             stats["追多"]["total"] += 1
             stats["追多"]["vol_sum"] += vol
             if next_price > price:
@@ -697,10 +699,21 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         # 但限制在 0.7 ~ 1.4 之間（不會太極端）
         env_multiplier = max(0.7, min(1.4, 1.0 + env_adjustment))
 
-        # 綜合分數 = 基礎分(勝率×信心×學習權重) × 核心過濾(regime×obv×recent) × 環境因子
+        # 全局歷史勝率修正（策略級別的整體表現回饋）
+        global_wr, global_n = learner.get_global_strat_winrate(strat)
+        global_penalty = 1.0
+        if global_wr is not None and global_n >= 20:
+            if global_wr < 40:
+                global_penalty = 0.5   # 勝率 < 40%：嚴重懲罰
+            elif global_wr < 50:
+                global_penalty = 0.75  # 勝率 < 50%：中度懲罰
+            elif global_wr > 70:
+                global_penalty = 1.2   # 勝率 > 70%：獎勵
+
+        # 綜合分數 = 基礎分(勝率×信心×學習權重) × 核心過濾(regime×obv×recent) × 環境因子 × 全局修正
         base_score = r * confidence * weight
         core_filter = regime_bonus * obv_bonus * recent_bonus
-        score = base_score * core_filter * env_multiplier
+        score = base_score * core_filter * env_multiplier * global_penalty
 
         strat_results[strat] = {
             "rate": r, "total": s["total"], "win": s["win"],
@@ -710,6 +723,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             "obv_bonus": round(obv_bonus, 2),
             "recent_bonus": round(recent_bonus, 2),
             "env_multiplier": round(env_multiplier, 2),
+            "global_penalty": round(global_penalty, 2),
             "env_detail": f"btc/htf/div/sr={env_adjustment:+.2f}",
             "score": round(score, 1),
         }

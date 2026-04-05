@@ -211,8 +211,12 @@ def run_backtest(symbol, klines, hold_periods=None, rsi_short_thresh=70, rsi_lon
                     "bb": bb_position, "obv": obv_d,
                 })
 
-        # 追多
-        if closes[ci] > closes[ci - 1] > closes[ci - 2] and 60 < rsi_cur < 85 and macd_up:
+        # 追多（加嚴：需 OBV 上升 + MFI > 40 確認買壓）
+        obv_rising = (ci >= 5 and ci < len(obv_vals) and
+                      obv_vals[ci] > obv_vals[ci - 5])
+        if (closes[ci] > closes[ci - 1] > closes[ci - 2]
+                and 60 < rsi_cur < 80 and macd_up
+                and mfi_cur > 40 and obv_rising):
             for hp in hold_periods:
                 exit_price = closes[ci + hp]
                 pnl_pct = (exit_price - price) / price * 100
