@@ -589,11 +589,15 @@ let scanInterval = 60;
 
 function fetchState() {
     fetch('/api/state')
-        .then(r => r.json())
+        .then(r => {
+            if (!r.ok) console.error('API state error:', r.status);
+            return r.json();
+        })
         .then(data => {
             updateUI(data);
         })
         .catch(err => {
+            console.error('fetchState error:', err);
             document.getElementById('statusText').textContent = '連線錯誤';
         });
 }

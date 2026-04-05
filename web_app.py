@@ -466,6 +466,7 @@ def run_background_scan():
                 strat_stats[strat] = {"wins": sw, "losses": sl_count, "rate": sr}
 
             # 更新全域狀態
+            add_log(f"準備更新儀表板：{len(top)} 個推薦，{len(results)} 個有效結果")
             with state_lock:
                 state["top_results"] = top
                 state["all_results"] = results
@@ -516,36 +517,39 @@ def index():
 @app.route("/api/state")
 def api_state():
     with state_lock:
-        # 序列化 top_results（只取需要的欄位）
+        # 序列化 top_results
         top = []
         for r in state["top_results"]:
-            top.append({
-                "symbol": r["symbol"],
-                "change24h": r["change24h"],
-                "price": r["price"],
-                "rsi": r["rsi"],
-                "mfi": r["mfi"],
-                "bb_pos": r["bb_pos"],
-                "atr": r["atr"],
-                "regime": r["regime"],
-                "obv_dir": r["obv_dir"],
-                "best_strat": r["best_strat"],
-                "best_rate": r["best_rate"],
-                "best_total": r["best_total"],
-                "best_score": r["best_score"],
-                "confidence": r["confidence"],
-                "weight": r["weight"],
-                "regime_bonus": r["regime_bonus"],
-                "obv_bonus": r["obv_bonus"],
-                "recent_bonus": r["recent_bonus"],
-                "signal_strength": r["signal_strength"],
-                "detail": r["detail"],
-                "tp": r["tp"],
-                "sl": r["sl"],
-                "rr": r["rr"],
-                "tp_pct": r["tp_pct"],
-                "sl_pct": r["sl_pct"],
-            })
+            try:
+                top.append({
+                    "symbol": r["symbol"],
+                    "change24h": r["change24h"],
+                    "price": r["price"],
+                    "rsi": r.get("rsi", 0),
+                    "mfi": r.get("mfi", 0),
+                    "bb_pos": r.get("bb_pos", "N/A"),
+                    "atr": r.get("atr", 0),
+                    "regime": r.get("regime", "unknown"),
+                    "obv_dir": r.get("obv_dir", 0),
+                    "best_strat": r["best_strat"],
+                    "best_rate": r["best_rate"],
+                    "best_total": r["best_total"],
+                    "best_score": r["best_score"],
+                    "confidence": r.get("confidence", "N/A"),
+                    "weight": r.get("weight", 1.0),
+                    "regime_bonus": r.get("regime_bonus", 1.0),
+                    "obv_bonus": r.get("obv_bonus", 1.0),
+                    "recent_bonus": r.get("recent_bonus", 1.0),
+                    "signal_strength": r.get("signal_strength", "WEAK"),
+                    "detail": r.get("detail", ""),
+                    "tp": r.get("tp", 0),
+                    "sl": r.get("sl", 0),
+                    "rr": r.get("rr", 0),
+                    "tp_pct": r.get("tp_pct", 0),
+                    "sl_pct": r.get("sl_pct", 0),
+                })
+            except Exception as e:
+                print(f"[API] 序列化結果出錯: {e}, keys={list(r.keys())}")
 
         return jsonify({
             "round": state["round"],
