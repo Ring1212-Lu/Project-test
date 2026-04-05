@@ -527,6 +527,7 @@ def index():
 
 @app.route("/api/state")
 def api_state():
+  try:
     with state_lock:
         # 序列化 top_results
         top = []
@@ -577,6 +578,13 @@ def api_state():
             "logs": state["logs"][-50:],
             "interval": INTERVAL,
         })
+  except Exception as e:
+    import traceback
+    print(f"[API STATE ERROR] {e}")
+    traceback.print_exc()
+    return jsonify({"error": str(e), "round": 0, "status": "error", "top_results": [], "all_count": 0,
+                     "pool_size": 0, "total_perps": 0, "gainer_top": None, "loser_top": None,
+                     "learn_stats": {}, "top_performers": [], "logs": [], "interval": INTERVAL})
 
 
 @app.route("/api/backtest/<symbol>")
@@ -745,4 +753,4 @@ if __name__ == "__main__":
         print(" 模擬交易機器人: 未啟動（可在面板中啟動，或加 --bot 參數）")
     print("=" * 50)
 
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
