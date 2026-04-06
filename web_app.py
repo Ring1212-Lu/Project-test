@@ -19,7 +19,7 @@ from flask import Flask, render_template, jsonify, request
 from crypto_monitor_v2 import (
     fetch_tickers, fetch_klines, fetch_and_analyze, analyze, get_btc_trend,
     fetch_trend_candidates, analyze_trend,
-    TOP15_PCT, TOP15_MAX, TOP_N, INTERVAL, MAX_WORKERS
+    TOP15_PCT, TOP15_MAX, TOP_N, MAX_WORKERS
 )
 from learning_engine import LearningEngine
 from trading_bot import RiskManager, check_positions, save_trade_log, load_trade_log
@@ -114,6 +114,7 @@ state = {
     "all_results": [],
     "trend_results": [],
     "trend_scan_time": "",
+    "scan_timestamp": 0,          # scan 最後更新時間戳（用於過期檢測）
     "pool_size": 0,
     "total_perps": 0,
     "gainer_top": None,
@@ -203,8 +204,6 @@ def run_trading_bot(initial_balance=100):
     """背景交易機器人執行緒"""
     global trading_risk_mgr, trading_client
 
-    from crypto_monitor_v2 import get_btc_trend
-
     client = PionexClient(paper_mode=True)
     client.paper_balance = initial_balance
 
@@ -259,19 +258,24 @@ def run_trading_bot(initial_balance=100):
         # 持倉由 position_checker 執行緒獨立檢查（每 30s/300s），
         # 避免與 bot 主迴圈雙重平倉導致餘額錯誤
 
-        # 驗證學習預測
-        validated = learner.validate_pending_predictions()
-        if validated > 0:
-            add_trading_log(f"驗證了 {validated} 筆預測")
-
-        btc_trend = get_btc_trend()
-        btc_str = {1: "UP", -1: "DOWN", 0: "NEUTRAL"}.get(btc_trend, "?")
-        add_trading_log(f"BTC 趨勢: {btc_str}")
-
         # === 從監控共享結果讀取信號（不再自己掃描，節省 API）===
-        # 讀取短線信號
         with state_lock:
             results = list(state.get("all_results", []))
+            scan_ts = state.get("scan_timestamp", 0)
+            btc_trend = state.get("btc_trend", 0)
+
+        # 過期檢測：若 scan 超過 3 輪未更新，跳過本輪避免用陳舊信號開倉
+        scan_age = time.time() - scan_ts if scan_ts > 0 else float('inf')
+        if scan_age > SCAN_INTERVAL * 3:
+            if scan_ts > 0:
+                add_trading_log(f"[警告] 監控數據已過期 {int(scan_age)}s，跳過本輪")
+            else:
+                add_trading_log("等待監控產生第一輪數據...")
+            time.sleep(BOT_CHECK_INTERVAL)
+            continue
+
+        btc_str = {1: "UP", -1: "DOWN", 0: "NEUTRAL"}.get(btc_trend, "?")
+        add_trading_log(f"BTC: {btc_str} | 信號年齡: {int(scan_age)}s")
 
         # 排除已持倉的幣種
         held_symbols = {p["symbol"] for p in risk_mgr.open_positions}
@@ -557,7 +561,13 @@ def run_background_scan():
             add_log(f"BTC 大盤趨勢: {btc_str}")
 
             # === 每輪都跑短線，每 TREND_EVERY_N 輪加跑趨勢 ===
-            is_trend_round = (round_num % TREND_EVERY_N == 0)
+            # 4H K 線閉合觸發：UTC 整點 (00/04/08/12/16/20) 後 2 分鐘內強制掃描趨勢
+            from datetime import timezone
+            utc_now = datetime.now(timezone.utc)
+            is_4h_candle_close = (utc_now.hour % 4 == 0 and utc_now.minute < 3)
+            is_trend_round = (round_num % TREND_EVERY_N == 0) or is_4h_candle_close
+            if is_4h_candle_close and (round_num % TREND_EVERY_N != 0):
+                add_log(f"[趨勢] 4H K 線閉合觸發（UTC {utc_now.strftime('%H:%M')}）")
 
             # ── 短線���描（1M K線，每輪都跑）──
             add_log(f"[短線] 並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒��...")
@@ -631,8 +641,13 @@ def run_background_scan():
                 with state_lock:
                     state["top_results"] = top
                     state["all_results"] = results
+                    state["scan_timestamp"] = time.time()
+                    state["btc_trend"] = btc_trend  # 共享給 Bot，避免重複 API
             else:
                 add_log("本輪無足夠樣本的幣種")
+                with state_lock:
+                    state["scan_timestamp"] = time.time()  # 即使無結果也更新時間戳
+                    state["btc_trend"] = btc_trend
 
             # ── 趨勢掃描（4H K線，每 TREND_EVERY_N 輪跑一次）──
             if is_trend_round:
@@ -828,7 +843,7 @@ def api_state():
             "learn_stats": state["learn_stats"],
             "top_performers": state["top_performers"],
             "logs": state["logs"][-50:],
-            "interval": INTERVAL,
+            "interval": SCAN_INTERVAL,
         })
   except Exception as e:
     import traceback
@@ -836,7 +851,7 @@ def api_state():
     traceback.print_exc()
     return jsonify({"error": str(e), "round": 0, "status": "error", "top_results": [], "all_count": 0,
                      "pool_size": 0, "total_perps": 0, "gainer_top": None, "loser_top": None,
-                     "learn_stats": {}, "top_performers": [], "logs": [], "interval": INTERVAL})
+                     "learn_stats": {}, "top_performers": [], "logs": [], "interval": SCAN_INTERVAL})
 
 
 @app.route("/api/backtest/<symbol>")
