@@ -36,6 +36,8 @@ from crypto_monitor_v2 import (
 )
 from learning_engine import MarketRegime
 
+# Fee model: round-trip taker fees (0.05% per side x 2)
+BACKTEST_FEE_PCT = 0.1  # 0.1% round-trip fee
 
 # ===== Session =====
 def _create_session():
@@ -168,21 +170,21 @@ def run_backtest(symbol, klines, hold_periods=None, rsi_short_thresh=70, rsi_lon
             obv_d = 1 if obv_vals[ci] > obv_vals[ci - 10] else -1
 
         # 做空（嚴格版）
-        if rsi_prev > rsi_short_thresh and rsi_cur < rsi_prev and macd_down and rsi_cur > 30:
+        if rsi_prev > rsi_short_thresh and rsi_cur < rsi_prev and macd_down:
             for hp in hold_periods:
                 exit_price = closes[ci + hp]
-                pnl_pct = (price - exit_price) / price * 100  # 做空盈虧
+                pnl_pct = (price - exit_price) / price * 100 - BACKTEST_FEE_PCT  # 做空盈虧 - fees
                 trades[hp]["做空"].append({
                     "entry": price, "exit": exit_price, "pnl_pct": pnl_pct,
                     "rsi": rsi_cur, "mfi": mfi_cur, "regime": regime,
                     "bb": bb_position, "obv": obv_d,
                 })
 
-        # 做空（寬鬆版：RSI 門檻 -5，去掉 rsi>30 限制）
-        if rsi_prev > (rsi_short_thresh - 5) and rsi_cur < rsi_prev and macd_down:
+        # 做空（寬鬆版：RSI 門檻 -10，去掉 rsi>30 限制）
+        if rsi_prev > (rsi_short_thresh - 10) and rsi_cur < rsi_prev and macd_down:
             for hp in hold_periods:
                 exit_price = closes[ci + hp]
-                pnl_pct = (price - exit_price) / price * 100
+                pnl_pct = (price - exit_price) / price * 100 - BACKTEST_FEE_PCT
                 trades[hp]["做空(寬)"].append({
                     "entry": price, "exit": exit_price, "pnl_pct": pnl_pct,
                     "rsi": rsi_cur, "mfi": mfi_cur, "regime": regime,
@@ -190,21 +192,21 @@ def run_backtest(symbol, klines, hold_periods=None, rsi_short_thresh=70, rsi_lon
                 })
 
         # 抄底（嚴格版）
-        if rsi_prev < rsi_long_thresh and rsi_cur > rsi_prev and mfi_cur < 25 and macd_up:
+        if rsi_prev < rsi_long_thresh and rsi_cur > rsi_prev and mfi_cur < 35 and macd_up:
             for hp in hold_periods:
                 exit_price = closes[ci + hp]
-                pnl_pct = (exit_price - price) / price * 100
+                pnl_pct = (exit_price - price) / price * 100 - BACKTEST_FEE_PCT
                 trades[hp]["抄底"].append({
                     "entry": price, "exit": exit_price, "pnl_pct": pnl_pct,
                     "rsi": rsi_cur, "mfi": mfi_cur, "regime": regime,
                     "bb": bb_position, "obv": obv_d,
                 })
 
-        # 抄底（寬鬆版：MFI < 35，RSI 門檻 +5）
-        if rsi_prev < (rsi_long_thresh + 5) and rsi_cur > rsi_prev and mfi_cur < 35 and macd_up:
+        # 抄底（寬鬆版：MFI < 45，RSI 門檻 +10）
+        if rsi_prev < (rsi_long_thresh + 10) and rsi_cur > rsi_prev and mfi_cur < 45 and macd_up:
             for hp in hold_periods:
                 exit_price = closes[ci + hp]
-                pnl_pct = (exit_price - price) / price * 100
+                pnl_pct = (exit_price - price) / price * 100 - BACKTEST_FEE_PCT
                 trades[hp]["抄底(寬)"].append({
                     "entry": price, "exit": exit_price, "pnl_pct": pnl_pct,
                     "rsi": rsi_cur, "mfi": mfi_cur, "regime": regime,
@@ -219,7 +221,7 @@ def run_backtest(symbol, klines, hold_periods=None, rsi_short_thresh=70, rsi_lon
                 and mfi_cur > 30 and obv_rising):
             for hp in hold_periods:
                 exit_price = closes[ci + hp]
-                pnl_pct = (exit_price - price) / price * 100
+                pnl_pct = (exit_price - price) / price * 100 - BACKTEST_FEE_PCT
                 trades[hp]["追多"].append({
                     "entry": price, "exit": exit_price, "pnl_pct": pnl_pct,
                     "rsi": rsi_cur, "mfi": mfi_cur, "regime": regime,

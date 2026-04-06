@@ -16,6 +16,7 @@ import json
 import os
 import time
 import math
+import threading
 from datetime import datetime
 from collections import defaultdict
 
@@ -92,6 +93,7 @@ class LearningEngine:
     }
 
     def __init__(self, filepath):
+        self._lock = threading.RLock()
         self.filepath = filepath
         self.data = {
             "weights": {},          # {"SYMBOL:STRATEGY": {"value": float, "updated": timestamp}}
@@ -118,45 +120,47 @@ class LearningEngine:
     # ---- 持久化 ----
 
     def _load(self):
-        if os.path.exists(self.filepath):
-            try:
-                with open(self.filepath, 'r', encoding='utf-8') as f:
-                    loaded = json.load(f)
-                # 合併載入的資料（向後相容）
-                for key in self.data:
-                    if key in loaded:
-                        self.data[key] = loaded[key]
-                # 遷移舊格式權重（純數字 → 物件）
-                for k, v in list(self.data["weights"].items()):
-                    if isinstance(v, (int, float)):
-                        self.data["weights"][k] = {
-                            "value": v, "updated": time.time()
-                        }
-                # 確保結構完整
-                for strat in ["做空", "抄底", "追多"]:
-                    if strat not in self.data["stats"]["strategy_stats"]:
-                        self.data["stats"]["strategy_stats"][strat] = {
-                            "wins": 0, "losses": 0, "expired": 0
-                        }
-                if "regime_stats" not in self.data["stats"]:
-                    self.data["stats"]["regime_stats"] = {}
-                print(f"[LEARN] 載入學習資料：{len(self.data['pending'])} 筆待驗證，"
-                      f"{len(self.data['history'])} 筆歷史，"
-                      f"{len(self.data['weights'])} 組權重")
-            except (json.JSONDecodeError, KeyError, TypeError) as e:
-                print(f"[LEARN] 學習檔案損壞，重新初始化: {e}")
+        with self._lock:
+            if os.path.exists(self.filepath):
+                try:
+                    with open(self.filepath, 'r', encoding='utf-8') as f:
+                        loaded = json.load(f)
+                    # 合併載入的資料（向後相容）
+                    for key in self.data:
+                        if key in loaded:
+                            self.data[key] = loaded[key]
+                    # 遷移舊格式權重（純數字 → 物件）
+                    for k, v in list(self.data["weights"].items()):
+                        if isinstance(v, (int, float)):
+                            self.data["weights"][k] = {
+                                "value": v, "updated": time.time()
+                            }
+                    # 確保結構完整
+                    for strat in ["做空", "抄底", "追多"]:
+                        if strat not in self.data["stats"]["strategy_stats"]:
+                            self.data["stats"]["strategy_stats"][strat] = {
+                                "wins": 0, "losses": 0, "expired": 0
+                            }
+                    if "regime_stats" not in self.data["stats"]:
+                        self.data["stats"]["regime_stats"] = {}
+                    print(f"[LEARN] 載入學習資料：{len(self.data['pending'])} 筆待驗證，"
+                          f"{len(self.data['history'])} 筆歷史，"
+                          f"{len(self.data['weights'])} 組權重")
+                except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    print(f"[LEARN] 學習檔案損壞，重新初始化: {e}")
 
     def save(self):
-        # 裁剪
-        if len(self.data["history"]) > self.MAX_HISTORY:
-            self.data["history"] = self.data["history"][-self.MAX_HISTORY:]
-        if len(self.data["pending"]) > self.MAX_PENDING:
-            self.data["pending"] = self.data["pending"][-self.MAX_PENDING:]
-        try:
-            with open(self.filepath, 'w', encoding='utf-8') as f:
-                json.dump(self.data, f, ensure_ascii=False, indent=2)
-        except IOError as e:
-            print(f"[LEARN] 儲存失敗: {e}")
+        with self._lock:
+            # 裁剪
+            if len(self.data["history"]) > self.MAX_HISTORY:
+                self.data["history"] = self.data["history"][-self.MAX_HISTORY:]
+            if len(self.data["pending"]) > self.MAX_PENDING:
+                self.data["pending"] = self.data["pending"][-self.MAX_PENDING:]
+            try:
+                with open(self.filepath, 'w', encoding='utf-8') as f:
+                    json.dump(self.data, f, ensure_ascii=False, indent=2)
+            except IOError as e:
+                print(f"[LEARN] 儲存失敗: {e}")
 
     # ---- 權重管理 ----
 
@@ -217,73 +221,75 @@ class LearningEngine:
     def record_prediction(self, symbol, strategy, entry_price, tp_price, sl_price,
                           rate, score, regime="unknown"):
         """記錄一筆預測"""
-        prediction = {
-            "symbol":      symbol,
-            "strategy":    strategy,
-            "entry_price": entry_price,
-            "tp_price":    tp_price,
-            "sl_price":    sl_price,
-            "rate":        rate,
-            "score":       score,
-            "regime":      regime,
-            "timestamp":   time.time(),
-            "time_str":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        self.data["pending"].append(prediction)
-        self.data["stats"]["total_predictions"] += 1
+        with self._lock:
+            prediction = {
+                "symbol":      symbol,
+                "strategy":    strategy,
+                "entry_price": entry_price,
+                "tp_price":    tp_price,
+                "sl_price":    sl_price,
+                "rate":        rate,
+                "score":       score,
+                "regime":      regime,
+                "timestamp":   time.time(),
+                "time_str":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            self.data["pending"].append(prediction)
+            self.data["stats"]["total_predictions"] += 1
         self.save()
 
     # ---- 預測驗證 ----
 
     def validate_pending_predictions(self):
         """驗證所有待驗證的預測，回傳本次驗證筆數"""
-        if not self.data["pending"]:
-            return 0
+        with self._lock:
+            if not self.data["pending"]:
+                return 0
 
-        now = time.time()
-        validated_count = 0
-        remaining = []
+            now = time.time()
+            validated_count = 0
+            remaining = []
 
-        current_prices = self._fetch_current_prices()
+            current_prices = self._fetch_current_prices()
 
-        for pred in self.data["pending"]:
-            age = now - pred["timestamp"]
-            symbol = pred["symbol"]
-            strategy = pred["strategy"]
+            for pred in self.data["pending"]:
+                age = now - pred["timestamp"]
+                symbol = pred["symbol"]
+                strategy = pred["strategy"]
 
-            # 超過 TTL → 過期
-            if age > self.PREDICTION_TTL:
-                self._record_result(pred, "expired")
-                validated_count += 1
-                continue
+                # 超過 TTL → 過期
+                if age > self.PREDICTION_TTL:
+                    self._record_result(pred, "expired")
+                    validated_count += 1
+                    continue
 
-            # 未到驗證時間
-            if age < self.MIN_VALIDATION_AGE:
-                remaining.append(pred)
-                continue
+                # 未到驗證時間
+                if age < self.MIN_VALIDATION_AGE:
+                    remaining.append(pred)
+                    continue
 
-            current_price = current_prices.get(symbol)
-            if current_price is None:
-                remaining.append(pred)
-                continue
+                current_price = current_prices.get(symbol)
+                if current_price is None:
+                    remaining.append(pred)
+                    continue
 
-            result = self._check_prediction(pred, current_price, age)
-            if result is not None:
-                is_win = result
-                self._record_result(pred, "win" if is_win else "lose")
-                new_w = self._update_weight(symbol, strategy, is_win)
-                # 記錄 regime 統計
-                self._update_regime_stats(pred.get("regime", "unknown"), strategy, is_win)
-                validated_count += 1
-            else:
-                remaining.append(pred)
+                result = self._check_prediction(pred, current_price, age)
+                if result is not None:
+                    is_win = result
+                    self._record_result(pred, "win" if is_win else "lose")
+                    new_w = self._update_weight(symbol, strategy, is_win)
+                    # 記錄 regime 統計
+                    self._update_regime_stats(pred.get("regime", "unknown"), strategy, is_win)
+                    validated_count += 1
+                else:
+                    remaining.append(pred)
 
-        self.data["pending"] = remaining
-        if validated_count > 0:
-            self.data["stats"]["total_validations"] += validated_count
-            self.save()
+            self.data["pending"] = remaining
+            if validated_count > 0:
+                self.data["stats"]["total_validations"] += validated_count
+                self.save()
 
-        return validated_count
+            return validated_count
 
     def _check_prediction(self, pred, current_price, age):
         """

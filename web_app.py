@@ -26,6 +26,10 @@ from pionex_client import PionexClient
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
+# Same-coin cooldown after stop-loss
+_symbol_cooldown = {}  # {symbol: timestamp_of_last_stoploss}
+COOLDOWN_SECONDS = 3600  # 60 minutes
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LEARNING_FILE = os.path.join(BASE_DIR, "learning_data.json")
 TRADE_LOG_FILE = os.path.join(BASE_DIR, "trade_log.json")
@@ -134,6 +138,33 @@ def add_trading_log(msg):
             trading_state["logs"] = trading_state["logs"][-MAX_LOGS:]
 
 
+def _check_positions(risk_mgr, client):
+    """Check positions with cooldown tracking for stop-losses"""
+    # Snapshot open positions before check
+    before_ids = {p["id"]: p for p in list(risk_mgr.open_positions)}
+    check_positions(risk_mgr, client)
+    # Detect closed positions
+    after_ids = {p["id"] for p in risk_mgr.open_positions}
+    for pid, pos in before_ids.items():
+        if pid not in after_ids:
+            # Position was closed — check if it was a loss
+            pnl = pos.get("pnl", 0)
+            if pnl < 0:
+                _symbol_cooldown[pos["symbol"]] = time.time() + COOLDOWN_SECONDS
+                add_trading_log(f"[COOLDOWN] {pos['symbol']} cooldown {COOLDOWN_SECONDS}s after SL")
+
+
+def run_position_checker(risk_mgr, client):
+    """Independent thread to check TP/SL every 30 seconds"""
+    while True:
+        try:
+            if risk_mgr.open_positions:
+                _check_positions(risk_mgr, client)
+        except Exception as e:
+            print(f"[POS-CHECK] Error: {e}")
+        time.sleep(30)
+
+
 def run_trading_bot(initial_balance=100):
     """背景交易機器人執行緒"""
     global trading_risk_mgr, trading_client
@@ -149,7 +180,7 @@ def run_trading_bot(initial_balance=100):
         "max_positions": 2,
         "max_consecutive_loss": 3,
         "min_signal_strength": "MEDIUM",
-        "min_score": 60,
+        "min_score": 80,
         "min_win_rate": 55,
         "min_rr": 1.3,
     }
@@ -162,6 +193,12 @@ def run_trading_bot(initial_balance=100):
         trading_state["enabled"] = True
 
     add_trading_log(f"機器人啟動 | 初始資金: {initial_balance}U (模擬模式)")
+
+    # Start position checker thread (every 30 seconds)
+    pos_checker = threading.Thread(target=run_position_checker, args=(risk_mgr, client), daemon=True)
+    pos_checker.start()
+    add_trading_log("持倉檢查執行緒已啟動（每 30 秒）")
+
     # 等待 45 秒再開始，錯開與監控掃描的 API 呼叫
     add_trading_log("等待 45 秒後開始掃描（避免 API 限流）...")
     time.sleep(45)
@@ -175,7 +212,7 @@ def run_trading_bot(initial_balance=100):
         add_trading_log(f"=== 交易掃描第 {round_num} 輪 ===")
 
         # 檢查現有持倉
-        check_positions(risk_mgr, client)
+        _check_positions(risk_mgr, client)
 
         # 驗證學習預測
         validated = learner.validate_pending_predictions()
@@ -259,6 +296,13 @@ def run_trading_bot(initial_balance=100):
                 add_trading_log(f"{sym_short}: SKIP (24h跌{r['change24h']:.1f}%，暴跌中不做多)")
                 continue
 
+            # Same-coin cooldown check
+            cooldown_until = _symbol_cooldown.get(r["symbol"], 0)
+            if time.time() < cooldown_until:
+                remaining = int(cooldown_until - time.time())
+                add_trading_log(f"{sym_short}: SKIP (cooldown {remaining}s remaining)")
+                continue
+
             can_open, reason = risk_mgr.can_open_position(r)
             if not can_open:
                 add_trading_log(f"{sym_short}: SKIP ({reason})")
@@ -278,12 +322,19 @@ def run_trading_bot(initial_balance=100):
             order_result = client.place_order(r["symbol"], side, "MARKET", quantity)
 
             if order_result.get("result") or order_result.get("paper_mode"):
+                # Slippage simulation (0.1% adverse)
+                slippage = 0.001
+                if side == "BUY":
+                    entry_price = price * (1 + slippage)
+                else:
+                    entry_price = price * (1 - slippage)
+
                 pos = {
                     "id": f"pos_{int(time.time()*1000)}",
                     "symbol": r["symbol"],
                     "side": side,
                     "strategy": strat,
-                    "entry_price": price,
+                    "entry_price": entry_price,
                     "tp_price": r["tp"],
                     "sl_price": r["sl"],
                     "size": size_usd,

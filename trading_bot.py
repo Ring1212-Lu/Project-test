@@ -23,6 +23,7 @@ import os
 import sys
 import json
 import time
+import threading
 import argparse
 from datetime import datetime, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -47,6 +48,9 @@ except ImportError:
         return text
 
 
+FEE_RATE = 0.0005  # 0.05% per side (taker)
+MAX_POSITION_AGE = 7200  # 2 hours in seconds
+
 # ===== 安全設定 =====
 class RiskManager:
     """風控管理器"""
@@ -54,6 +58,7 @@ class RiskManager:
     def __init__(self, initial_balance, config=None):
         if config is None:
             config = {}
+        self._lock = threading.RLock()
         self.initial_balance = initial_balance
         self.current_balance = initial_balance
         self.daily_start_balance = initial_balance
@@ -64,7 +69,7 @@ class RiskManager:
         self.max_positions = config.get("max_positions", 2)        # 最大同時持倉
         self.max_consecutive_loss = config.get("max_consecutive_loss", 3)
         self.min_signal_strength = config.get("min_signal_strength", "MEDIUM")
-        self.min_score = config.get("min_score", 60)
+        self.min_score = config.get("min_score", 80)
         self.min_win_rate = config.get("min_win_rate", 55)
         self.min_rr = config.get("min_rr", 1.3)
 
@@ -79,58 +84,60 @@ class RiskManager:
 
     def new_day_check(self):
         """檢查是否新的一天，重置日計數器"""
-        if date.today() != self.today:
-            self.today = date.today()
-            self.daily_start_balance = self.current_balance
-            self.daily_pnl = 0
-            if self.halted and "daily" in self.halt_reason:
-                self.halted = False
-                self.halt_reason = ""
-                print(color("[RISK] 新的一天，解除每日虧損停機", 'green'))
+        with self._lock:
+            if date.today() != self.today:
+                self.today = date.today()
+                self.daily_start_balance = self.current_balance
+                self.daily_pnl = 0
+                if self.halted and "daily" in self.halt_reason:
+                    self.halted = False
+                    self.halt_reason = ""
+                    print(color("[RISK] 新的一天，解除每日虧損停機", 'green'))
 
     def can_open_position(self, signal):
         """檢查是否允許開倉"""
-        self.new_day_check()
+        with self._lock:
+            self.new_day_check()
 
-        if self.halted:
-            return False, f"已停機: {self.halt_reason}"
+            if self.halted:
+                return False, f"已停機: {self.halt_reason}"
 
-        # 每日虧損檢查
-        daily_loss_pct = abs(self.daily_pnl) / self.daily_start_balance * 100 if self.daily_start_balance > 0 else 0
-        if self.daily_pnl < 0 and daily_loss_pct >= self.max_loss_pct:
-            self.halted = True
-            self.halt_reason = f"daily loss {daily_loss_pct:.1f}% >= {self.max_loss_pct}%"
-            return False, f"每日虧損已達 {daily_loss_pct:.1f}%，停止交易"
+            # 每日虧損檢查
+            daily_loss_pct = abs(self.daily_pnl) / self.daily_start_balance * 100 if self.daily_start_balance > 0 else 0
+            if self.daily_pnl < 0 and daily_loss_pct >= self.max_loss_pct:
+                self.halted = True
+                self.halt_reason = f"daily loss {daily_loss_pct:.1f}% >= {self.max_loss_pct}%"
+                return False, f"每日虧損已達 {daily_loss_pct:.1f}%，停止交易"
 
-        # 連續虧損檢查
-        if self.consecutive_losses >= self.max_consecutive_loss:
-            self.halted = True
-            self.halt_reason = f"consecutive losses: {self.consecutive_losses}"
-            return False, f"連續虧損 {self.consecutive_losses} 次，停止交易"
+            # 連續虧損檢查
+            if self.consecutive_losses >= self.max_consecutive_loss:
+                self.halted = True
+                self.halt_reason = f"consecutive losses: {self.consecutive_losses}"
+                return False, f"連續虧損 {self.consecutive_losses} 次，停止交易"
 
-        # 持倉數檢查
-        if len(self.open_positions) >= self.max_positions:
-            return False, f"持倉數已達上限 {self.max_positions}"
+            # 持倉數檢查
+            if len(self.open_positions) >= self.max_positions:
+                return False, f"持倉數已達上限 {self.max_positions}"
 
-        # 信號品質檢查（連虧時自動收緊門檻）
-        dynamic_min_score = self._get_dynamic_min_score()
+            # 信號品質檢查（連虧時自動收緊門檻）
+            dynamic_min_score = self._get_dynamic_min_score()
 
-        strength = signal.get("signal_strength", "WEAK")
-        strength_order = {"STRONG": 3, "MEDIUM": 2, "WEAK": 1}
-        min_order = strength_order.get(self.min_signal_strength, 3)
-        if strength_order.get(strength, 0) < min_order:
-            return False, f"信號強度 {strength} 不足（需要 {self.min_signal_strength}）"
+            strength = signal.get("signal_strength", "WEAK")
+            strength_order = {"STRONG": 3, "MEDIUM": 2, "WEAK": 1}
+            min_order = strength_order.get(self.min_signal_strength, 3)
+            if strength_order.get(strength, 0) < min_order:
+                return False, f"信號強度 {strength} 不足（需要 {self.min_signal_strength}）"
 
-        if signal.get("best_score", 0) < dynamic_min_score:
-            return False, f"分數 {signal['best_score']} < {dynamic_min_score}{'（收緊中）' if dynamic_min_score > self.min_score else ''}"
+            if signal.get("best_score", 0) < dynamic_min_score:
+                return False, f"分數 {signal['best_score']} < {dynamic_min_score}{'（收緊中）' if dynamic_min_score > self.min_score else ''}"
 
-        if signal.get("best_rate", 0) < self.min_win_rate:
-            return False, f"勝率 {signal['best_rate']}% < {self.min_win_rate}%"
+            if signal.get("best_rate", 0) < self.min_win_rate:
+                return False, f"勝率 {signal['best_rate']}% < {self.min_win_rate}%"
 
-        if signal.get("rr", 0) < self.min_rr:
-            return False, f"風報比 {signal['rr']} < {self.min_rr}"
+            if signal.get("rr", 0) < self.min_rr:
+                return False, f"風報比 {signal['rr']} < {self.min_rr}"
 
-        return True, "OK"
+            return True, "OK"
 
     def _get_dynamic_min_score(self):
         """根據近期勝率動態調整最低分數門檻"""
@@ -154,22 +161,24 @@ class RiskManager:
 
     def record_open(self, position):
         """記錄開倉"""
-        self.open_positions.append(position)
+        with self._lock:
+            self.open_positions.append(position)
 
     def record_close(self, position, pnl):
         """記錄平倉"""
-        self.open_positions = [p for p in self.open_positions if p["id"] != position["id"]]
-        position["pnl"] = pnl
-        position["closed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.closed_trades.append(position)
+        with self._lock:
+            self.open_positions = [p for p in self.open_positions if p["id"] != position["id"]]
+            position["pnl"] = pnl
+            position["closed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.closed_trades.append(position)
 
-        self.current_balance += pnl
-        self.daily_pnl += pnl
+            self.current_balance += pnl
+            self.daily_pnl += pnl
 
-        if pnl >= 0:
-            self.consecutive_losses = 0
-        else:
-            self.consecutive_losses += 1
+            if pnl >= 0:
+                self.consecutive_losses = 0
+            else:
+                self.consecutive_losses += 1
 
     def get_status(self):
         """取得風控狀態摘要"""
@@ -258,6 +267,18 @@ def check_positions(risk_mgr, client):
         should_close = False
         reason = ""
 
+        # Position timeout check (2 hours)
+        opened_at_str = pos.get("opened_at", "")
+        if opened_at_str:
+            try:
+                opened_time = datetime.strptime(opened_at_str, "%Y-%m-%d %H:%M:%S")
+                age_seconds = (datetime.now() - opened_time).total_seconds()
+                if age_seconds >= MAX_POSITION_AGE:
+                    should_close = True
+                    reason = "TIMEOUT"
+            except (ValueError, TypeError):
+                pass
+
         if side == "SELL":  # 做空
             pnl_pct = (entry - current) / entry * 100
             if current <= tp:
@@ -276,11 +297,12 @@ def check_positions(risk_mgr, client):
                 reason = "SL"
 
         if should_close:
-            # 計算 PnL
+            # 計算 PnL (subtract round-trip fees)
+            fee = size * FEE_RATE * 2
             if side == "SELL":
-                pnl = (entry - current) / entry * size
+                pnl = (entry - current) / entry * size - fee
             else:
-                pnl = (current - entry) / entry * size
+                pnl = (current - entry) / entry * size - fee
 
             # 平倉
             close_side = "BUY" if side == "SELL" else "SELL"
@@ -540,7 +562,7 @@ def main():
         "max_positions": args.max_positions,
         "max_consecutive_loss": 3,
         "min_signal_strength": args.min_signal,
-        "min_score": 60,
+        "min_score": 80,
         "min_win_rate": 55,
         "min_rr": 1.3,
     }

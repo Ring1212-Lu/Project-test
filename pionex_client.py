@@ -142,13 +142,22 @@ class PionexClient:
             body["clientOrderId"] = client_order_id
 
         if self.paper_mode:
+            # Simulate 0.1% adverse slippage on fill price for paper mode
+            fill_price = price
+            if fill_price and order_type == "MARKET":
+                slippage = 0.001  # 0.1%
+                if side == "BUY":
+                    fill_price = round(float(fill_price) * (1 + slippage), 8)
+                else:
+                    fill_price = round(float(fill_price) * (1 - slippage), 8)
+
             order = {
                 "orderId": f"paper_{int(time.time()*1000)}",
                 "symbol": symbol,
                 "side": side,
                 "type": order_type,
                 "size": size,
-                "price": price,
+                "price": fill_price,
                 "status": "filled" if order_type == "MARKET" else "open",
                 "timestamp": time.time(),
                 "paper_mode": True,

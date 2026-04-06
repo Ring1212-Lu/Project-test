@@ -50,7 +50,7 @@ TOP_N      = 3         # 最終回報前幾名
 MIN_SIG    = 3         # 最低訊號次數門檻
 TOP15_PCT  = 0.15      # 每側（漲/跌）取百分比
 TOP15_MAX  = 12        # 每側最多取幾個
-MAX_WORKERS = 3        # 並行執行緒數
+MAX_WORKERS = 6        # 並行執行緒數
 MAX_RETRIES = 3        # API 請求重試次數
 
 # ATR 倍數（自適應止盈止損）
@@ -314,25 +314,29 @@ def _pionex_to_binance_symbol(pionex_sym):
 
 
 def fetch_tickers():
-    """從幣安合約 API 抓取行情，轉換成相容格式"""
-    try:
-        r = _throttled_get(TICK_URL, timeout=15)
-        if r.status_code == 200:
-            data = r.json()
-            tickers = []
-            for t in data:
-                sym = t.get("symbol", "")
-                if not sym.endswith("USDT"):
-                    continue
-                tickers.append({
-                    "symbol": _binance_to_pionex_symbol(sym),
-                    "open": t.get("openPrice", "0"),
-                    "close": t.get("lastPrice", "0"),
-                    "amount": t.get("quoteVolume", "0"),  # USDT 成交額
-                })
-            return tickers
-    except Exception as e:
-        print(f"  [ERROR] 行情抓取失敗: {type(e).__name__}: {e}")
+    """從幣安合約 API 抓取行情，轉換成相容格式（帶 3 次重試）"""
+    for attempt in range(3):
+        try:
+            r = _throttled_get(TICK_URL, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                tickers = []
+                for t in data:
+                    sym = t.get("symbol", "")
+                    if not sym.endswith("USDT"):
+                        continue
+                    tickers.append({
+                        "symbol": _binance_to_pionex_symbol(sym),
+                        "open": t.get("openPrice", "0"),
+                        "close": t.get("lastPrice", "0"),
+                        "amount": t.get("quoteVolume", "0"),  # USDT 成交額
+                    })
+                return tickers
+            print(f"  [WARN] fetch_tickers HTTP {r.status_code} (attempt {attempt+1})")
+        except Exception as e:
+            print(f"  [ERROR] 行情抓取失敗: {type(e).__name__}: {e} (attempt {attempt+1})")
+        if attempt < 2:
+            time.sleep(2 ** attempt)  # 1s, 2s backoff
     return []
 
 
@@ -360,31 +364,47 @@ def _create_session():
 # 全域 Session（連線池復用，避免反覆握手）
 _session = _create_session()
 
-# API 請求節流：每次請求間隔至少 1 秒
+# Token Bucket 限速器（允許真正的並發）
 import threading
-_api_lock = threading.Lock()
+
+class RateLimiter:
+    """Token Bucket 限速器，允許真正的並發"""
+    def __init__(self, max_per_second=5):
+        self._lock = threading.Lock()
+        self._tokens = max_per_second
+        self._max = max_per_second
+        self._last_refill = time.time()
+
+    def acquire(self):
+        while True:
+            with self._lock:
+                now = time.time()
+                elapsed = now - self._last_refill
+                self._tokens = min(self._max, self._tokens + elapsed * self._max)
+                self._last_refill = now
+                if self._tokens >= 1:
+                    self._tokens -= 1
+                    return
+            time.sleep(0.05)
+
+_rate_limiter = RateLimiter(max_per_second=5)
 _last_api_call = 0
-API_THROTTLE = 0.2  # 秒（幣安限流寬鬆，0.2秒即可）
 
 def _throttled_get(url, **kwargs):
-    """帶節流的 GET 請求，遇到 429 自動等待重試"""
-    global _last_api_call
-    with _api_lock:
-        now = time.time()
-        wait = API_THROTTLE - (now - _last_api_call)
-        if wait > 0:
-            time.sleep(wait)
-        _last_api_call = time.time()
-
-    r = _session.get(url, **kwargs)
-    # 遇到 429 自動等待後重試一次
-    if r.status_code == 429:
-        retry_after = int(r.headers.get("Retry-After", 30))
-        print(f"  [WARN] 429 限流，等待 {retry_after} 秒後重試...")
-        time.sleep(retry_after)
-        with _api_lock:
-            _last_api_call = time.time()
-        r = _session.get(url, **kwargs)
+    """帶限速的 GET 請求，遇到 429 自動等待重試（3 次）"""
+    for attempt in range(3):
+        _rate_limiter.acquire()
+        try:
+            r = _session.get(url, **kwargs)
+            if r.status_code != 429:
+                return r
+            retry_after = int(r.headers.get("Retry-After", 30))
+            print(f"  [WARN] 429 Rate limited, wait {retry_after}s (attempt {attempt+1})")
+            time.sleep(retry_after)
+        except Exception as e:
+            if attempt == 2:
+                raise
+            time.sleep(2 ** attempt)
     return r
 
 
@@ -575,28 +595,28 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             vol = 1.0
 
         # ---- 做空條件（嚴格版，使用優化閾值）----
-        if rsi_prev > rsi_short_th and rsi_cur < rsi_prev and macd_down and rsi_cur > 30:
+        if rsi_prev > rsi_short_th and rsi_cur < rsi_prev and macd_down:
             stats["做空"]["total"] += 1
             stats["做空"]["vol_sum"] += vol
             if next_price < price:
                 stats["做空"]["win"] += 1
 
-        # ---- 做空條件（寬鬆版：RSI 門檻 -5，去掉 rsi>30 限制）----
-        if rsi_prev > (rsi_short_th - 5) and rsi_cur < rsi_prev and macd_down:
+        # ---- 做空條件（寬鬆版：RSI 門檻 -10，去掉 rsi>30 限制）----
+        if rsi_prev > (rsi_short_th - 10) and rsi_cur < rsi_prev and macd_down:
             stats["做空(寬)"]["total"] += 1
             stats["做空(寬)"]["vol_sum"] += vol
             if next_price < price:
                 stats["做空(寬)"]["win"] += 1
 
         # ---- 抄底條件（嚴格版，使用優化閾值）----
-        if rsi_prev < rsi_long_th and rsi_cur > rsi_prev and mfi_cur < 25 and macd_up:
+        if rsi_prev < rsi_long_th and rsi_cur > rsi_prev and mfi_cur < 35 and macd_up:
             stats["抄底"]["total"] += 1
             stats["抄底"]["vol_sum"] += vol
             if next_price > price:
                 stats["抄底"]["win"] += 1
 
-        # ---- 抄底條件（寬鬆版：MFI < 35，RSI 門檻 +5）----
-        if rsi_prev < (rsi_long_th + 5) and rsi_cur > rsi_prev and mfi_cur < 35 and macd_up:
+        # ---- 抄底條件（寬鬆版：MFI < 45，RSI 門檻 +10）----
+        if rsi_prev < (rsi_long_th + 10) and rsi_cur > rsi_prev and mfi_cur < 45 and macd_up:
             stats["抄底(寬)"]["total"] += 1
             stats["抄底(寬)"]["vol_sum"] += vol
             if next_price > price:
