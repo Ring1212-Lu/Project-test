@@ -442,7 +442,7 @@
         <div class="card" style="flex:1;min-width:300px">
             <div class="card-title" style="display:flex;align-items:center;gap:8px">
                 <span style="font-size:18px">&#x1F4C8;</span> 趨勢推薦
-                <span style="font-size:11px;color:#8b949e;margin-left:auto">4H K線 | 持倉3-7天</span>
+                <span id="trendScanTime" style="font-size:11px;color:#8b949e;margin-left:auto">4H K線 | 持倉3-7天</span>
             </div>
             <div id="trendResults">
                 <div class="empty-state" style="padding:30px;text-align:center;color:#484f58">
@@ -688,6 +688,11 @@ function updateUI(data) {
         trendDiv.innerHTML = data.trend_results.map((r, i) => renderTrendResult(r, i)).join('');
     } else {
         trendDiv.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#484f58">暫無趨勢訊號</div>';
+    }
+    // 趨勢掃描時間
+    const trendTimeEl = document.getElementById('trendScanTime');
+    if (data.trend_scan_time) {
+        trendTimeEl.textContent = '4H K線 | 上次掃描: ' + data.trend_scan_time;
     }
 
     // Learning stats

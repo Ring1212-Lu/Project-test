@@ -45,7 +45,7 @@ except ImportError:
 # 幣安合約 API（比派網限流寬鬆，價格幾乎一致）
 BASE_URL   = "https://fapi.binance.com/fapi/v1/klines"
 TICK_URL   = "https://fapi.binance.com/fapi/v1/ticker/24hr"
-INTERVAL   = 120       # 秒，每輪間隔（2分鐘）
+INTERVAL   = 60        # 秒，每輪間隔（短線/趨勢交替，各隔2分鐘）
 TOP_N      = 3         # 最終回報前幾名
 MIN_SIG    = 2         # 最低訊號次數門檻（降低讓高勝率的做空/抄底不被淘汰）
 TOP15_PCT  = 0.15      # 每側（漲/跌）取百分比
@@ -965,16 +965,34 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0):
             continue
         rsi_i = rsi_vals[rsi_idx]
 
-        # 趨勢做多
+        # 趨勢做多（含持倉期間 TP/SL 檢查）
         if e20 > e50 and price_i > e20 and 45 <= rsi_i <= 75:
             stats["趨勢做多"]["total"] += 1
-            if future_price > price_i:
+            tp_hit, sl_hit = False, False
+            for j in range(1, hold_period + 1):
+                fp = closes[i + j]
+                if fp >= price_i * 1.10:
+                    tp_hit = True
+                    break
+                if fp <= price_i * 0.92:
+                    sl_hit = True
+                    break
+            if tp_hit or (not sl_hit and future_price > price_i):
                 stats["趨勢做多"]["win"] += 1
 
-        # 趨勢做空
+        # 趨勢做空（含持倉期間 TP/SL 檢查）
         if e20 < e50 and price_i < e20 and 25 <= rsi_i <= 55:
             stats["趨勢做空"]["total"] += 1
-            if future_price < price_i:
+            tp_hit, sl_hit = False, False
+            for j in range(1, hold_period + 1):
+                fp = closes[i + j]
+                if fp <= price_i * 0.90:
+                    tp_hit = True
+                    break
+                if fp >= price_i * 1.08:
+                    sl_hit = True
+                    break
+            if tp_hit or (not sl_hit and future_price < price_i):
                 stats["趨勢做空"]["win"] += 1
 
     # 計算分數

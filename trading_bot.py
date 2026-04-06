@@ -103,56 +103,9 @@ class RiskManager:
                     print(color("[RISK] 新的一天，解除每日虧損停機", 'green'))
 
     def can_open_position(self, signal):
-        """檢查是否允許開倉"""
+        """檢查是否允許開倉（僅檢查，不開倉。建議用 try_open_position 原子操作）"""
         with self._lock:
-            self.new_day_check()
-
-            if self.halted:
-                return False, f"已停機: {self.halt_reason}"
-
-            # 每日虧損檢查
-            daily_loss_pct = abs(self.daily_pnl) / self.daily_start_balance * 100 if self.daily_start_balance > 0 else 0
-            if self.daily_pnl < 0 and daily_loss_pct >= self.max_loss_pct:
-                self.halted = True
-                self.halt_reason = f"daily loss {daily_loss_pct:.1f}% >= {self.max_loss_pct}%"
-                return False, f"每日虧損已達 {daily_loss_pct:.1f}%，停止交易"
-
-            # 連續虧損檢查
-            if self.consecutive_losses >= self.max_consecutive_loss:
-                self.halted = True
-                self.halt_reason = f"consecutive losses: {self.consecutive_losses}"
-                return False, f"連續虧損 {self.consecutive_losses} 次，停止交易"
-
-            # 持倉數檢查（短線和趨勢獨立計算）
-            is_trend = signal.get("strategy_type") == "trend"
-            short_positions = [p for p in self.open_positions if p.get("strategy_type") != "trend"]
-            trend_positions = [p for p in self.open_positions if p.get("strategy_type") == "trend"]
-            if is_trend:
-                if len(trend_positions) >= self.max_trend_positions:
-                    return False, f"趨勢持倉數已達上限 {self.max_trend_positions}"
-            else:
-                if len(short_positions) >= self.max_positions:
-                    return False, f"短線持倉數已達上限 {self.max_positions}"
-
-            # 信號品質檢查（連虧時自動收緊門檻）
-            dynamic_min_score = self._get_dynamic_min_score()
-
-            strength = signal.get("signal_strength", "WEAK")
-            strength_order = {"STRONG": 3, "MEDIUM": 2, "WEAK": 1}
-            min_order = strength_order.get(self.min_signal_strength, 3)
-            if strength_order.get(strength, 0) < min_order:
-                return False, f"信號強度 {strength} 不足（需要 {self.min_signal_strength}）"
-
-            if signal.get("best_score", 0) < dynamic_min_score:
-                return False, f"分數 {signal['best_score']} < {dynamic_min_score}{'（收緊中）' if dynamic_min_score > self.min_score else ''}"
-
-            if signal.get("best_rate", 0) < self.min_win_rate:
-                return False, f"勝率 {signal['best_rate']}% < {self.min_win_rate}%"
-
-            if signal.get("rr", 0) < self.min_rr:
-                return False, f"風報比 {signal['rr']} < {self.min_rr}"
-
-            return True, "OK"
+            return self._can_open_unlocked(signal)
 
     def _get_dynamic_min_score(self):
         """根據近期勝率動態調整最低分數門檻"""
@@ -181,6 +134,67 @@ class RiskManager:
         max_pct = max(max_pct, 5)  # 最低 5%
         size_usd = self.current_balance * (max_pct / 100)
         return round(size_usd, 2), max_pct
+
+    def try_open_position(self, signal, position):
+        """原子化開倉：檢查 + 記錄在同一個鎖內，避免 TOCTOU 競態"""
+        with self._lock:
+            can, reason = self._can_open_unlocked(signal)
+            if not can:
+                return False, reason
+            self.open_positions.append(position)
+            return True, "OK"
+
+    def _can_open_unlocked(self, signal):
+        """內部用：不加鎖的開倉檢查（供 try_open_position 呼叫）"""
+        self.new_day_check()
+
+        if self.halted:
+            return False, f"已停機: {self.halt_reason}"
+
+        daily_loss_pct = abs(self.daily_pnl) / self.daily_start_balance * 100 if self.daily_start_balance > 0 else 0
+        if self.daily_pnl < 0 and daily_loss_pct >= self.max_loss_pct:
+            self.halted = True
+            self.halt_reason = f"daily loss {daily_loss_pct:.1f}% >= {self.max_loss_pct}%"
+            return False, f"每日虧損已達 {daily_loss_pct:.1f}%，停止交易"
+
+        if self.consecutive_losses >= self.max_consecutive_loss:
+            self.halted = True
+            self.halt_reason = f"consecutive losses: {self.consecutive_losses}"
+            return False, f"連續虧損 {self.consecutive_losses} 次，停止交易"
+
+        is_trend = signal.get("strategy_type") == "trend"
+        short_positions = [p for p in self.open_positions if p.get("strategy_type") != "trend"]
+        trend_positions = [p for p in self.open_positions if p.get("strategy_type") == "trend"]
+        if is_trend:
+            if len(trend_positions) >= self.max_trend_positions:
+                return False, f"趨勢持倉數已達上限 {self.max_trend_positions}"
+        else:
+            if len(short_positions) >= self.max_positions:
+                return False, f"短線持倉數已達上限 {self.max_positions}"
+
+        dynamic_min_score = self._get_dynamic_min_score()
+
+        strength = signal.get("signal_strength", "WEAK")
+        strength_order = {"STRONG": 3, "MEDIUM": 2, "WEAK": 1}
+        min_order = strength_order.get(self.min_signal_strength, 3)
+        if strength_order.get(strength, 0) < min_order:
+            return False, f"信號強度 {strength} 不足（需要 {self.min_signal_strength}）"
+
+        if is_trend:
+            if signal.get("best_score", 0) < 60:
+                return False, f"趨勢分數 {signal['best_score']} < 60"
+        else:
+            if signal.get("best_score", 0) < dynamic_min_score:
+                return False, f"分數 {signal['best_score']} < {dynamic_min_score}{'（收緊中）' if dynamic_min_score > self.min_score else ''}"
+
+        if signal.get("best_rate", 0) < self.min_win_rate:
+            return False, f"勝率 {signal['best_rate']}% < {self.min_win_rate}%"
+
+        min_rr_check = 1.2 if is_trend else self.min_rr
+        if signal.get("rr", 0) < min_rr_check:
+            return False, f"風報比 {signal['rr']} < {min_rr_check}"
+
+        return True, "OK"
 
     def record_open(self, position):
         """記錄開倉"""
@@ -235,6 +249,35 @@ class RiskManager:
 # ===== 交易日誌 =====
 
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_log.json")
+
+def load_trade_log(risk_mgr):
+    """啟動時從 trade_log.json 恢復未平倉位"""
+    if not os.path.exists(LOG_FILE):
+        return 0
+    try:
+        with open(LOG_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        positions = data.get("open_positions", [])
+        restored = 0
+        for pos in positions:
+            if pos.get("id") and pos.get("symbol"):
+                risk_mgr.record_open(pos)
+                restored += 1
+        # 恢復已平倉歷史（用於勝率計算）
+        closed = data.get("closed_trades", [])
+        if closed:
+            risk_mgr.closed_trades = closed
+            wins = sum(1 for t in closed if t.get("pnl", 0) > 0)
+        # 恢復餘額
+        saved_status = data.get("status", {})
+        if saved_status.get("balance"):
+            risk_mgr.current_balance = saved_status["balance"]
+            risk_mgr.daily_start_balance = saved_status["balance"]
+        return restored
+    except Exception as e:
+        print(color(f"[RISK] 載入交易記錄失敗: {e}", 'yellow'))
+        return 0
+
 
 def save_trade_log(risk_mgr):
     """儲存交易記錄"""
@@ -305,27 +348,30 @@ def check_positions(risk_mgr, client):
                 pass
 
         if is_trend:
-            # Trend trailing stop: every 3% profit, move SL up 2%
+            # 趨勢跟蹤止損：基於當前價格，每 3% 利潤步進收緊
             if side == "SELL":
                 profit_pct = (entry - current) / entry
             else:
                 profit_pct = (current - entry) / entry
 
             if profit_pct > TREND_TRAILING_TRIGGER:
-                # Calculate how many 3% steps of profit we've achieved
                 steps = int(profit_pct / TREND_TRAILING_TRIGGER)
-                # Move SL by steps * 2% from entry
-                sl_move = steps * TREND_TRAILING_STEP
+                # 基於當前價格計算 SL，保留 2% 的回撤空間
+                trail_pct = TREND_TRAILING_STEP  # 2% buffer from current price
                 if side == "SELL":
-                    new_sl = entry * (1 - sl_move)
-                    if new_sl < sl:  # For shorts, lower SL is tighter
-                        pos["sl_price"] = new_sl
-                        sl = new_sl
+                    # 做空：SL 在當前價格上方 2%（鎖利）
+                    new_sl = current * (1 + trail_pct)
+                    # 只允許 SL 向下移動（更緊），不允許往上退
+                    if new_sl < sl:
+                        pos["sl_price"] = round(new_sl, 6)
+                        sl = pos["sl_price"]
                 else:
-                    new_sl = entry * (1 + sl_move)
-                    if new_sl > sl:  # For longs, higher SL is tighter
-                        pos["sl_price"] = new_sl
-                        sl = new_sl
+                    # 做多：SL 在當前價格下方 2%（鎖利）
+                    new_sl = current * (1 - trail_pct)
+                    # 只允許 SL 向上移動（更緊），不允許往下退
+                    if new_sl > sl:
+                        pos["sl_price"] = round(new_sl, 6)
+                        sl = pos["sl_price"]
         else:
             # 移動止損：盈利 >= 1倍ATR時，SL移到進場價+成本（真正保本）
             # 成本 = 滑價0.1%×2 + 手續費0.05%×2 ≈ 0.3%

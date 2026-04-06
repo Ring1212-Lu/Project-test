@@ -22,7 +22,7 @@ from crypto_monitor_v2 import (
     TOP15_PCT, TOP15_MAX, TOP_N, INTERVAL, MAX_WORKERS
 )
 from learning_engine import LearningEngine
-from trading_bot import RiskManager, check_positions, save_trade_log
+from trading_bot import RiskManager, check_positions, save_trade_log, load_trade_log
 from pionex_client import PionexClient
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -34,6 +34,17 @@ COOLDOWN_SECONDS = 3600  # 60 minutes
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LEARNING_FILE = os.path.join(BASE_DIR, "learning_data.json")
 TRADE_LOG_FILE = os.path.join(BASE_DIR, "trade_log.json")
+
+# 共用 LearningEngine（所有線程共用同一實例，避免檔案寫入競爭）
+_shared_learner = None
+_shared_learner_lock = threading.Lock()
+
+def get_shared_learner():
+    global _shared_learner
+    with _shared_learner_lock:
+        if _shared_learner is None:
+            _shared_learner = LearningEngine(LEARNING_FILE)
+        return _shared_learner
 
 # 共享 ticker 快取（監控和機器人共用，減少 API 呼叫）
 _ticker_cache = {"data": [], "time": 0}
@@ -85,6 +96,9 @@ def notify_strong_signals(results):
         )
     send_discord_message("\n".join(lines))
 
+
+# 做空策略集合（用於判斷 side）
+SELL_STRATEGIES = {"做空", "做空(寬)", "趨勢做空"}
 
 # 全域狀態
 state = {
@@ -157,14 +171,19 @@ def _check_positions(risk_mgr, client):
 
 
 def run_position_checker(risk_mgr, client):
-    """Independent thread to check TP/SL every 30 seconds"""
+    """自適應間隔檢查持倉 TP/SL（有短線 30s，僅趨勢 300s，無倉 60s）"""
     while True:
         try:
             if risk_mgr.open_positions:
                 _check_positions(risk_mgr, client)
+                has_short = any(p.get("strategy_type") != "trend" for p in risk_mgr.open_positions)
+                interval = 30 if has_short else 300
+            else:
+                interval = 60
         except Exception as e:
             print(f"[POS-CHECK] Error: {e}")
-        time.sleep(30)
+            interval = 30
+        time.sleep(interval)
 
 
 def run_trading_bot(initial_balance=100):
@@ -187,23 +206,28 @@ def run_trading_bot(initial_balance=100):
         "min_rr": 1.3,
     }
     risk_mgr = RiskManager(initial_balance, risk_config)
-    learner = LearningEngine(LEARNING_FILE)
+    learner = get_shared_learner()
 
     with trading_lock:
         trading_risk_mgr = risk_mgr
         trading_client = client
         trading_state["enabled"] = True
 
-    add_trading_log(f"機器人啟動 | 初始資金: {initial_balance}U (模擬模式)")
+    # 恢復上次的持倉和餘額
+    restored = load_trade_log(risk_mgr)
+    if restored > 0:
+        add_trading_log(f"從記錄恢復 {restored} 個未平倉位，餘額: {risk_mgr.current_balance:.2f}U")
+    else:
+        add_trading_log(f"機器人啟動 | 初始資金: {initial_balance}U (模擬模式)")
 
     # Start position checker thread (every 30 seconds)
     pos_checker = threading.Thread(target=run_position_checker, args=(risk_mgr, client), daemon=True)
     pos_checker.start()
     add_trading_log("持倉檢查執行緒已啟動（每 30 秒）")
 
-    # 等待 45 秒再開始，錯開與監控掃描的 API 呼叫
-    add_trading_log("等待 45 秒後開始掃描（避免 API 限流）...")
-    time.sleep(45)
+    # 等待 30 秒再開始，與監控交替執行
+    add_trading_log("等待 30 秒後開始掃描（與監控交替）...")
+    time.sleep(30)
     round_num = 0
 
     while True:
@@ -211,7 +235,9 @@ def run_trading_bot(initial_balance=100):
         with trading_lock:
             trading_state["round"] = round_num
 
-        add_trading_log(f"=== 交易掃描第 {round_num} 輪 ===")
+        is_trend_round = (round_num % 2 == 0)
+        round_type = "趨勢" if is_trend_round else "短線"
+        add_trading_log(f"=== 交易掃描第 {round_num} 輪 ({round_type}) ===")
 
         # 檢查現有持倉
         _check_positions(risk_mgr, client)
@@ -226,50 +252,34 @@ def run_trading_bot(initial_balance=100):
         btc_str = {1: "UP", -1: "DOWN", 0: "NEUTRAL"}.get(btc_trend, "?")
         add_trading_log(f"BTC 趨勢: {btc_str}")
 
-        # 趨勢掃描（每 120 輪 ≈ 4 小時）
-        trend_scan_interval = 120
-        if round_num % trend_scan_interval == 1 or round_num == 1:
-            try:
-                add_trading_log("[TREND] 交易機器人趨勢掃描...")
-                trend_tickers = get_shared_tickers()
-                trend_candidates = fetch_trend_candidates(trend_tickers)
-                trend_results_bot = []
-                for coin in trend_candidates:
-                    klines_4h = fetch_klines(coin["symbol"], interval="4h", limit=120)
-                    if klines_4h and len(klines_4h) >= 60:
-                        tres = analyze_trend(coin["symbol"], klines_4h, coin["change"], learner, btc_trend)
-                        if tres:
-                            trend_results_bot.append(tres)
-                trend_results_bot.sort(key=lambda x: x["best_score"], reverse=True)
+        # === 趨勢輪：從監控掃描的共用結果開倉 ===
+        if is_trend_round:
+            with state_lock:
+                trend_results_bot = list(state.get("trend_results", []))
 
-                # 嘗試開趨勢倉位（使用 RiskManager 獨立限制）
+            if trend_results_bot:
+                add_trading_log(f"[趨勢輪] 檢查 {len(trend_results_bot)} 個趨勢訊號...")
                 for tr in trend_results_bot[:3]:
-                    if tr["best_score"] < 80:
-                        continue
-                    # 用 can_open_position 做統一風控檢查（含趨勢獨立持倉限制）
                     trend_signal = {**tr, "strategy_type": "trend"}
                     can_open, reason = risk_mgr.can_open_position(trend_signal)
                     if not can_open:
                         add_trading_log(f"[TREND] 無法開倉: {reason}")
                         if "持倉數已達上限" in reason:
-                            break  # 趨勢倉位已滿，不用再嘗試
+                            break
                         continue
                     sym_short = tr["symbol"].replace("_USDT_PERP", "")
-                    # Check cooldown
                     cooldown_until = _symbol_cooldown.get(tr["symbol"], 0)
                     if time.time() < cooldown_until:
                         continue
-                    # 10% fixed sizing for trend
                     size_usd = round(risk_mgr.current_balance * 0.10, 2)
                     if size_usd < 1:
                         continue
                     strat = tr["best_strat"]
-                    side = "SELL" if "做空" in strat else "BUY"
+                    side = "SELL" if strat in SELL_STRATEGIES else "BUY"
                     price = tr["price"]
                     quantity = round(size_usd / price, 6) if price > 0 else 0
                     if quantity <= 0:
                         continue
-
                     order_result = client.place_order(tr["symbol"], side, "MARKET", quantity)
                     if order_result.get("result") or order_result.get("paper_mode"):
                         slippage = 0.001
@@ -297,15 +307,21 @@ def run_trading_bot(initial_balance=100):
                             entry_price=price, tp_price=tr["tp"], sl_price=tr["sl"],
                             rate=tr["best_rate"], score=tr["best_score"],
                             regime=tr.get("regime", "unknown"),
-                            ttl=72 * 3600,  # 72h TTL for trend
+                            ttl=72 * 3600,
                         )
                         add_trading_log(f"[TREND] OPEN {sym_short} {strat}({side}) "
                                         f"{size_usd}U | Score:{tr['best_score']} | TP:{tr['tp']} SL:{tr['sl']}")
-                        break  # 每次掃描最多開 1 個趨勢倉
+                        break
                     else:
                         add_trading_log(f"[TREND] ORDER FAILED: {tr['symbol']}")
-            except Exception as e:
-                add_trading_log(f"[TREND] Error: {e}")
+            else:
+                add_trading_log("[趨勢輪] 暫無趨勢訊號（等待監控掃描）")
+
+            _update_trading_state(risk_mgr)
+            save_trade_log(risk_mgr)
+            learner.save()
+            time.sleep(INTERVAL)
+            continue
 
         # 抓行情（使用共享快取，減少 API 呼叫）
         tickers = get_shared_tickers()
@@ -405,7 +421,7 @@ def run_trading_bot(initial_balance=100):
                 continue
 
             strat = r["best_strat"]
-            side = "SELL" if "做空" in strat else "BUY"
+            side = "SELL" if strat in SELL_STRATEGIES else "BUY"
             price = r["price"]
             quantity = round(size_usd / price, 6) if price > 0 else 0
             if quantity <= 0:
@@ -478,7 +494,7 @@ def run_background_scan():
     """背景掃描執行緒（帶錯誤保護）"""
     print("[SCAN] 背景掃描執行緒啟動")
     try:
-        learner = LearningEngine(LEARNING_FILE)
+        learner = get_shared_learner()
     except Exception as e:
         print(f"[SCAN] LearningEngine 初始化失敗: {e}")
         return
@@ -558,101 +574,126 @@ def run_background_scan():
             btc_str = {1: "UP", -1: "DOWN", 0: "NEUTRAL"}.get(btc_trend, "?")
             add_log(f"BTC 大盤趨勢: {btc_str}")
 
-            # 趨勢掃描（每 120 輪 ≈ 4 小時執行一次）
-            trend_scan_interval = 120
-            if round_num % trend_scan_interval == 1 or round_num == 1:
+            # === 交替掃描：奇數輪=短線，偶數輪=趨勢 ===
+            is_trend_round = (round_num % 2 == 0)
+
+            if is_trend_round:
+                # ── 趨勢掃描（4H K線）──
+                add_log(f"[趨勢輪] 開始趨勢掃描（4H K線）...")
                 try:
-                    add_log("[TREND] 開始趨勢掃描（4H K線）...")
                     trend_candidates = fetch_trend_candidates(tickers)
                     trend_results = []
-                    for coin in trend_candidates:
-                        klines_4h = fetch_klines(coin["symbol"], interval="4h", limit=120)
-                        if klines_4h and len(klines_4h) >= 60:
-                            tres = analyze_trend(coin["symbol"], klines_4h, coin["change"], learner, btc_trend)
-                            if tres:
-                                trend_results.append(tres)
+                    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                        futures = {
+                            executor.submit(fetch_klines, c["symbol"], "4h", 120): c
+                            for c in trend_candidates
+                        }
+                        for future in as_completed(futures):
+                            coin = futures[future]
+                            try:
+                                klines_4h = future.result()
+                                if klines_4h and len(klines_4h) >= 60:
+                                    tres = analyze_trend(coin["symbol"], klines_4h, coin["change"], learner, btc_trend)
+                                    if tres:
+                                        trend_results.append(tres)
+                            except Exception:
+                                pass
                     trend_results.sort(key=lambda x: x["best_score"], reverse=True)
                     with state_lock:
-                        state["trend_results"] = trend_results[:3]
-                    add_log(f"[TREND] 趨勢掃描完成，{len(trend_results)} 個訊號，取前 {min(3, len(trend_results))} 個")
+                        state["trend_results"] = trend_results[:5]
+                        state["trend_scan_time"] = datetime.now().strftime("%H:%M:%S")
+                    add_log(f"[趨勢輪] 趨勢掃描完成，{len(trend_results)} 個訊號，取前 {min(5, len(trend_results))} 個")
+
+                    # 記錄趨勢預測
+                    for r in trend_results[:3]:
+                        learner.record_prediction(
+                            symbol=r["symbol"], strategy=r["best_strat"],
+                            entry_price=r["price"], tp_price=r["tp"], sl_price=r["sl"],
+                            rate=r["best_rate"], score=r["best_score"],
+                            regime=r.get("regime", "unknown"), ttl=72 * 3600,
+                        )
                 except Exception as e:
                     print(f"[TREND] Error: {e}")
-                    add_log(f"[TREND] 趨勢掃描出錯: {e}")
+                    add_log(f"[趨勢輪] 趨勢掃描出錯: {e}")
+            else:
+                # ── 短線掃描（1M K線）──
+                add_log(f"[短線輪] 並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒）...")
+                t_start = time.time()
+                results = []
+                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                    future_map = {
+                        executor.submit(fetch_and_analyze, coin, learner, None, btc_trend): coin
+                        for coin in pool
+                    }
+                    for future in as_completed(future_map):
+                        coin = future_map[future]
+                        try:
+                            res = future.result()
+                            if res:
+                                results.append(res)
+                        except Exception:
+                            pass
+                elapsed = round(time.time() - t_start, 1)
+                add_log(f"[短線輪] 分析完成，耗時 {elapsed} 秒")
 
-            # 並行分析
-            add_log(f"並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒）...")
-            t_start = time.time()
-            results = []
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                future_map = {
-                    executor.submit(fetch_and_analyze, coin, learner, None, btc_trend): coin
-                    for coin in pool
-                }
-                for future in as_completed(future_map):
-                    coin = future_map[future]
-                    try:
-                        res = future.result()
-                        if res:
-                            results.append(res)
-                    except Exception:
-                        pass
-            elapsed = round(time.time() - t_start, 1)
-            add_log(f"分析完成，耗時 {elapsed} 秒")
+                if not results:
+                    add_log("本輪無足夠樣本的幣種")
+                    with state_lock:
+                        state["status"] = "waiting"
+                    time.sleep(INTERVAL)
+                    continue
 
-            if not results:
-                add_log("本輪無足夠樣本的幣種")
+                results.sort(key=lambda x: x["best_score"], reverse=True)
+                top = results[:TOP_N]
+
+                # Discord 通知強訊號
+                notify_strong_signals(top)
+
+                # 記錄預測（嚴格版）
+                for r in top:
+                    learner.record_prediction(
+                        symbol=r["symbol"],
+                        strategy=r["best_strat"],
+                        entry_price=r["price"],
+                        tp_price=r["tp"],
+                        sl_price=r["sl"],
+                        rate=r["best_rate"],
+                        score=r["best_score"],
+                        regime=r["regime"],
+                    )
+
+                # 記錄寬鬆版預測（用於 A/B 比較）
+                for r in results:
+                    all_strats = r.get("all_strats", {})
+                    for relaxed_name in ["做空(寬)", "抄底(寬)"]:
+                        rs = all_strats.get(relaxed_name)
+                        if rs and rs["total"] >= 3 and rs["score"] > 0:
+                            base = relaxed_name.replace("(寬)", "").strip()
+                            is_short = (base == "做空")
+                            price = r["price"]
+                            atr = r.get("atr", price * 0.02)
+                            tp_mult = 2.0 if is_short else 2.5
+                            sl_mult = 1.2 if is_short else 1.5
+                            if is_short:
+                                tp_p = round(price - atr * tp_mult, 6)
+                                sl_p = round(price + atr * sl_mult, 6)
+                            else:
+                                tp_p = round(price + atr * tp_mult, 6)
+                                sl_p = round(price - atr * sl_mult, 6)
+                            learner.record_prediction(
+                                symbol=r["symbol"],
+                                strategy=relaxed_name,
+                                entry_price=price,
+                                tp_price=tp_p,
+                                sl_price=sl_p,
+                                rate=rs["rate"],
+                                score=rs["score"],
+                                regime=r["regime"],
+                            )
+
                 with state_lock:
-                    state["status"] = "waiting"
-                time.sleep(INTERVAL)
-                continue
-
-            results.sort(key=lambda x: x["best_score"], reverse=True)
-            top = results[:TOP_N]
-
-            # Discord 通知強訊號
-            notify_strong_signals(top)
-
-            # 記錄預測（嚴格版）
-            for r in top:
-                learner.record_prediction(
-                    symbol=r["symbol"],
-                    strategy=r["best_strat"],
-                    entry_price=r["price"],
-                    tp_price=r["tp"],
-                    sl_price=r["sl"],
-                    rate=r["best_rate"],
-                    score=r["best_score"],
-                    regime=r["regime"],
-                )
-
-            # 記錄寬鬆版預測（用於 A/B 比較）
-            for r in results:
-                all_strats = r.get("all_strats", {})
-                for relaxed_name in ["做空(寬)", "抄底(寬)"]:
-                    rs = all_strats.get(relaxed_name)
-                    if rs and rs["total"] >= 3 and rs["score"] > 0:
-                        base = relaxed_name.replace("(寬)", "").strip()
-                        is_short = (base == "做空")
-                        price = r["price"]
-                        atr = r.get("atr", price * 0.02)
-                        tp_mult = 2.0 if is_short else 2.5
-                        sl_mult = 1.2 if is_short else 1.5
-                        if is_short:
-                            tp_p = round(price - atr * tp_mult, 6)
-                            sl_p = round(price + atr * sl_mult, 6)
-                        else:
-                            tp_p = round(price + atr * tp_mult, 6)
-                            sl_p = round(price - atr * sl_mult, 6)
-                        learner.record_prediction(
-                            symbol=r["symbol"],
-                            strategy=relaxed_name,
-                            entry_price=price,
-                            tp_price=tp_p,
-                            sl_price=sl_p,
-                            rate=rs["rate"],
-                            score=rs["score"],
-                            regime=r["regime"],
-                        )
+                    state["top_results"] = top
+                    state["all_results"] = results
 
             # 學習統計
             stats = learner.data["stats"]
@@ -668,10 +709,7 @@ def run_background_scan():
                 strat_stats[strat] = {"wins": sw, "losses": sl_count, "rate": sr}
 
             # 更新全域狀態
-            print(f"[SCAN] 準備更新儀表板：{len(top)} 個推薦，{len(results)} 個有效結果")
             with state_lock:
-                state["top_results"] = top
-                state["all_results"] = results
                 state["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 state["status"] = "waiting"
                 state["learn_stats"] = {
@@ -798,6 +836,7 @@ def api_state():
             "last_update": state["last_update"],
             "top_results": top,
             "trend_results": trend,
+            "trend_scan_time": state.get("trend_scan_time", ""),
             "all_count": len(state["all_results"]),
             "pool_size": state["pool_size"],
             "total_perps": state["total_perps"],

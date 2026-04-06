@@ -82,7 +82,7 @@ class LearningEngine:
 
     # 歷史記錄上限
     MAX_HISTORY = 5000
-    MAX_PENDING = 500
+    MAX_PENDING = 2000
 
     # 市場狀態對策略的適配分數
     # 基於實際數據更新：做空各regime 74-100%，追多各regime <40%
@@ -223,8 +223,13 @@ class LearningEngine:
 
     def record_prediction(self, symbol, strategy, entry_price, tp_price, sl_price,
                           rate, score, regime="unknown", ttl=None):
-        """記錄一筆預測"""
+        """記錄一筆預測（同幣+同策略去重，避免 pending 溢出）"""
         with self._lock:
+            # 去重：同幣種+同策略尚在 pending 中 → 跳過
+            for p in self.data["pending"]:
+                if p["symbol"] == symbol and p["strategy"] == strategy:
+                    return  # 已存在，不重複記錄
+
             prediction = {
                 "symbol":      symbol,
                 "strategy":    strategy,
@@ -236,7 +241,7 @@ class LearningEngine:
                 "regime":      regime,
                 "timestamp":   time.time(),
                 "time_str":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "ttl":         ttl if ttl else self.PREDICTION_TTL,
+                "ttl":         ttl if ttl is not None else self.PREDICTION_TTL,
             }
             self.data["pending"].append(prediction)
             self.data["stats"]["total_predictions"] += 1
