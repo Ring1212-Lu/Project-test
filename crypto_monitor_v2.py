@@ -54,8 +54,8 @@ MAX_WORKERS = 6        # 並行執行緒數
 MAX_RETRIES = 3        # API 請求重試次數
 
 # ATR 倍數（自適應止盈止損）
-ATR_TP_MULT = {"做空": 1.5, "抄底": 2.0, "追多": 2.0, "做空(寬)": 1.5, "抄底(寬)": 2.0}
-ATR_SL_MULT = {"做空": 1.8, "抄底": 2.0, "追多": 2.0, "做空(寬)": 1.8, "抄底(寬)": 2.0}
+ATR_TP_MULT = {"做空": 1.5, "抄底": 2.0, "追多": 2.0, "做空(寬)": 1.5, "抄底(寬)": 2.0, "趨勢做多": 5.0, "趨勢做空": 5.0}
+ATR_SL_MULT = {"做空": 1.8, "抄底": 2.0, "追多": 2.0, "做空(寬)": 1.8, "抄底(寬)": 2.0, "趨勢做多": 4.0, "趨勢做空": 4.0}
 
 LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_data.json")
 
@@ -871,6 +871,223 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         "sl_pct":         sl_pct,
         # 所有策略結果
         "all_strats":     strat_results,
+    }
+
+
+# ============================================================
+#  趨勢策略（4H K線，3-7天持倉）
+# ============================================================
+
+def fetch_trend_candidates(tickers, min_volume=10_000_000):
+    """篩選日成交量 > 1000萬U 的主流幣做趨勢分析"""
+    candidates = []
+    for t in tickers:
+        sym = t.get("symbol", "")
+        if not sym.endswith("_USDT_PERP"):
+            continue
+        try:
+            vol = float(t.get("amount", 0))
+            c = float(t.get("close", 0))
+            o = float(t.get("open", 0))
+            if vol >= min_volume and c > 0 and o > 0:
+                change = (c - o) / o * 100
+                candidates.append({"symbol": sym, "change": change, "price": c, "volume": vol})
+        except (ValueError, ZeroDivisionError):
+            continue
+    candidates.sort(key=lambda x: x["volume"], reverse=True)
+    return candidates[:20]  # Top 20 by volume
+
+
+def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0):
+    """
+    趨勢策略分析（4H K線）
+    策略：趨勢做多 / 趨勢做空
+    持倉期：3-7天（18根4H K線 ≈ 3天）
+    """
+    closes = [float(k['close']) for k in klines_4h if float(k.get('close', 0)) > 0]
+    if len(closes) < 60:
+        return None
+
+    volumes = []
+    for k in klines_4h:
+        try:
+            volumes.append(float(k.get('volume', 0)))
+        except (ValueError, TypeError):
+            volumes.append(0)
+
+    # 計算指標
+    ema20 = calc_ema(closes, 20)
+    ema50 = calc_ema(closes, 50)
+    rsi_vals = calc_rsi_wilder(closes, 14)
+    obv_vals = calc_obv(closes, volumes[:len(closes)])
+    atr_vals = calc_atr(klines_4h)
+
+    if not ema20 or not ema50 or not rsi_vals or len(ema20) < 2 or len(ema50) < 2:
+        return None
+
+    current_price = closes[-1]
+    current_ema20 = ema20[-1]
+    current_ema50 = ema50[-1]
+    current_rsi = rsi_vals[-1] if rsi_vals else 50
+    current_atr = atr_vals[-1] if atr_vals else current_price * 0.02
+
+    # OBV 趨勢
+    obv_dir = obv_trend(obv_vals, lookback=10)
+
+    # Volume vs 20-period average
+    vol_avg_20 = mean(volumes[-20:]) if len(volumes) >= 20 else mean(volumes) if volumes else 1
+    current_vol = volumes[-1] if volumes else 0
+    vol_above_avg = current_vol > vol_avg_20
+
+    # 市場狀態偵測
+    regime = MarketRegime.detect(closes)
+
+    hold_period = 18  # ≈3 days of 4h candles
+
+    # 回測驗證
+    stats = {
+        "趨勢做多": {"win": 0, "total": 0},
+        "趨勢做空": {"win": 0, "total": 0},
+    }
+
+    for i in range(60, len(closes) - hold_period):
+        if i >= len(ema20) or i >= len(ema50):
+            continue
+        e20 = ema20[i]
+        e50 = ema50[i]
+        price_i = closes[i]
+        future_price = closes[i + hold_period]
+
+        # RSI index alignment
+        rsi_offset = len(closes) - len(rsi_vals)
+        rsi_idx = i - rsi_offset
+        if rsi_idx < 0 or rsi_idx >= len(rsi_vals):
+            continue
+        rsi_i = rsi_vals[rsi_idx]
+
+        # 趨勢做多
+        if e20 > e50 and price_i > e20 and 45 <= rsi_i <= 75:
+            stats["趨勢做多"]["total"] += 1
+            if future_price > price_i:
+                stats["趨勢做多"]["win"] += 1
+
+        # 趨勢做空
+        if e20 < e50 and price_i < e20 and 25 <= rsi_i <= 55:
+            stats["趨勢做空"]["total"] += 1
+            if future_price < price_i:
+                stats["趨勢做空"]["win"] += 1
+
+    # 計算分數
+    def rate(w, t):
+        return round(w / t * 100, 1) if t > 0 else 0.0
+
+    best_strat = None
+    best_score = 0
+    best_rate_val = 0
+    best_total = 0
+
+    for strat, s in stats.items():
+        if s["total"] < 3:
+            continue
+
+        r = rate(s["win"], s["total"])
+        is_long = (strat == "趨勢做多")
+
+        # Check current conditions
+        if is_long:
+            if not (current_ema20 > current_ema50 and current_price > current_ema20
+                    and 45 <= current_rsi <= 75):
+                continue
+        else:
+            if not (current_ema20 < current_ema50 and current_price < current_ema20
+                    and 25 <= current_rsi <= 55):
+                continue
+
+        weight = learner.get_weight(symbol, strat)
+        confidence = min(s["total"] / 10.0, 1.5) if s["total"] >= 3 else 0
+
+        # BTC trend bonus
+        btc_bonus = 0
+        if is_long and btc_trend == 1:
+            btc_bonus = 0.15
+        elif not is_long and btc_trend == -1:
+            btc_bonus = 0.15
+        elif is_long and btc_trend == -1:
+            btc_bonus = -0.10
+        elif not is_long and btc_trend == 1:
+            btc_bonus = -0.10
+
+        # Volume confirmation
+        vol_bonus = 0.10 if vol_above_avg else 0
+
+        # OBV confirmation
+        obv_bonus = 0
+        if is_long and obv_dir == 1:
+            obv_bonus = 0.10
+        elif not is_long and obv_dir == -1:
+            obv_bonus = 0.10
+
+        score = r * confidence * weight * (1.0 + btc_bonus + vol_bonus + obv_bonus)
+
+        if score > best_score:
+            best_score = score
+            best_strat = strat
+            best_rate_val = r
+            best_total = s["total"]
+
+    if not best_strat:
+        return None
+
+    # TP/SL: percentage-based
+    if best_strat == "趨勢做多":
+        tp_price = round(current_price * 1.10, 6)   # +10%
+        sl_price = round(current_price * 0.92, 6)   # -8%
+    else:  # 趨勢做空
+        tp_price = round(current_price * 0.90, 6)   # price down 10%
+        sl_price = round(current_price * 1.08, 6)   # price up 8%
+
+    tp_pct = 10.0
+    sl_pct = 8.0
+    rr = round(tp_pct / sl_pct, 2) if sl_pct > 0 else 0
+
+    # Signal strength
+    if best_score >= 120:
+        signal_strength = "STRONG"
+    elif best_score >= 80:
+        signal_strength = "MEDIUM"
+    else:
+        signal_strength = "WEAK"
+
+    ema_status = "EMA20 > EMA50" if current_ema20 > current_ema50 else "EMA20 < EMA50"
+
+    return {
+        "symbol":         symbol,
+        "change24h":      change24h,
+        "price":          current_price,
+        "rsi":            round(current_rsi, 1),
+        "atr":            round(current_atr, 6),
+        "regime":         regime,
+        "obv_dir":        obv_dir,
+        "ema20":          round(current_ema20, 6),
+        "ema50":          round(current_ema50, 6),
+        "ema_status":     ema_status,
+        "vol_above_avg":  vol_above_avg,
+        "btc_trend":      btc_trend,
+        # 最佳策略
+        "best_strat":     best_strat,
+        "best_rate":      best_rate_val,
+        "best_total":     best_total,
+        "best_score":     round(best_score, 1),
+        "signal_strength": signal_strength,
+        # 進出場
+        "tp":             tp_price,
+        "sl":             sl_price,
+        "rr":             rr,
+        "tp_pct":         tp_pct,
+        "sl_pct":         sl_pct,
+        # 趨勢特有
+        "strategy_type":  "trend",
+        "hold_days":      3,
     }
 
 

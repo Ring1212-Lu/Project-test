@@ -423,13 +423,31 @@
         </div>
     </div>
 
-    <!-- 推薦排名 -->
-    <div class="card full-width">
-        <div class="card-title">推薦排名</div>
-        <div id="topResults">
-            <div class="empty-state">
-                <div class="icon">...</div>
-                <div>等待第一輪掃描...</div>
+    <!-- 推薦排名：短線 + 趨勢 並排 -->
+    <div class="full-width" style="display:flex;gap:16px;flex-wrap:wrap">
+        <!-- 短線推薦 -->
+        <div class="card" style="flex:2;min-width:400px">
+            <div class="card-title" style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:18px">&#x26A1;</span> 短線推薦
+                <span style="font-size:11px;color:#8b949e;margin-left:8px">1M K線 | 持倉5-30分</span>
+            </div>
+            <div id="topResults">
+                <div class="empty-state">
+                    <div class="icon">...</div>
+                    <div>等待第一輪掃描...</div>
+                </div>
+            </div>
+        </div>
+        <!-- 趨勢推薦 -->
+        <div class="card" style="flex:1;min-width:300px">
+            <div class="card-title" style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:18px">&#x1F4C8;</span> 趨勢推薦
+                <span style="font-size:11px;color:#8b949e;margin-left:auto">4H K線 | 持倉3-7天</span>
+            </div>
+            <div id="trendResults">
+                <div class="empty-state" style="padding:30px;text-align:center;color:#484f58">
+                    等待趨勢掃描...（每4小時一次）
+                </div>
             </div>
         </div>
     </div>
@@ -471,7 +489,7 @@
                 <div class="stat-label">等待中</div>
             </div>
         </div>
-        <div class="learn-grid" id="stratStats" style="grid-template-columns:repeat(5,1fr)">
+        <div class="learn-grid" id="stratStats" style="grid-template-columns:repeat(auto-fit, minmax(100px, 1fr))">
             <div class="learn-item">
                 <div class="learn-strat" style="color:#f85149">做空</div>
                 <div class="learn-detail" id="stratShort">-</div>
@@ -491,6 +509,14 @@
             <div class="learn-item">
                 <div class="learn-strat" style="color:#d29922">追多</div>
                 <div class="learn-detail" id="stratChase">-</div>
+            </div>
+            <div class="learn-item" style="border-left:2px solid #388bfd44">
+                <div class="learn-strat" style="color:#388bfd;font-size:11px">趨勢做多</div>
+                <div class="learn-detail" id="stratTrendLong">-</div>
+            </div>
+            <div class="learn-item" style="border-left:2px solid #f8514944">
+                <div class="learn-strat" style="color:#bc8cff;font-size:11px">趨勢做空</div>
+                <div class="learn-detail" id="stratTrendShort">-</div>
             </div>
         </div>
     </div>
@@ -656,6 +682,14 @@ function updateUI(data) {
         }
     }
 
+    // Trend results
+    const trendDiv = document.getElementById('trendResults');
+    if (data.trend_results && data.trend_results.length > 0) {
+        trendDiv.innerHTML = data.trend_results.map((r, i) => renderTrendResult(r, i)).join('');
+    } else {
+        trendDiv.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#484f58">暫無趨勢訊號</div>';
+    }
+
     // Learning stats
     const ls = data.learn_stats;
     if (ls && ls.total_predictions !== undefined) {
@@ -671,6 +705,8 @@ function updateUI(data) {
             document.getElementById('stratBottom').innerHTML = formatStrat(ss['抄底']);
             document.getElementById('stratBottomR').innerHTML = formatStrat(ss['抄底(寬)']);
             document.getElementById('stratChase').innerHTML = formatStrat(ss['追多']);
+            document.getElementById('stratTrendLong').innerHTML = formatStrat(ss['趨勢做多']);
+            document.getElementById('stratTrendShort').innerHTML = formatStrat(ss['趨勢做空']);
         }
     }
 
@@ -763,6 +799,49 @@ function renderResult(r, rank) {
             <div><div class="ee-label">止盈 (+${r.tp_pct}%)</div><div class="ee-value ee-tp">${r.tp}</div></div>
             <div><div class="ee-label">止損 (-${r.sl_pct}%)</div><div class="ee-value ee-sl">${r.sl}</div></div>
             <div><div class="ee-label">風報比</div><div class="ee-value ee-rr">1:${r.rr}</div></div>
+        </div>
+    </div>`;
+}
+
+function renderTrendResult(r, rank) {
+    const chg = parseFloat(r.change24h) || 0;
+    const chgClass = chg >= 0 ? 'change-up' : 'change-down';
+    const chgStr = chg >= 0 ? '+' + chg.toFixed(2) + '%' : chg.toFixed(2) + '%';
+
+    const isLong = r.best_strat === '趨勢做多';
+    const borderColor = isLong ? '#388bfd' : '#f85149';
+    const stratColor = isLong ? '#388bfd' : '#f85149';
+    const stratBg = isLong ? 'rgba(56,139,253,0.15)' : 'rgba(248,81,73,0.15)';
+
+    const obvStr = {1:'上升', '-1':'下降', 0:'持平'}[r.obv_dir] || '?';
+    const emaCheck = r.ema_status ? r.ema_status + ' &#x2713;' : '';
+    const volStr = r.vol_above_avg ? '高於均值 &#x2713;' : '低於均值';
+
+    return `<div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid ${borderColor};border-radius:10px;padding:14px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div>
+                <span style="font-size:16px;font-weight:700;color:#58a6ff">${r.symbol.replace('_USDT_PERP','')}</span>
+            </div>
+            <span class="result-change ${chgClass}">${chgStr}</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
+            <span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;background:${stratBg};color:${stratColor}">${r.best_strat}</span>
+            <span class="signal-badge signal-${r.signal_strength}">${r.signal_strength}</span>
+            <span style="font-size:11px;color:#8b949e;padding:2px 6px;border-radius:4px;background:rgba(56,139,253,0.08)">持倉: 3-7天</span>
+            <span style="margin-left:auto;font-size:13px;color:${borderColor};font-weight:700">分數: ${r.best_score}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;font-size:13px;margin-bottom:10px">
+            <span style="color:#8b949e">價格</span><span style="text-align:right">${r.price}</span>
+            <span style="color:#8b949e">RSI</span><span style="text-align:right">${r.rsi}</span>
+            <span style="color:#8b949e">EMA</span><span style="text-align:right;color:${isLong ? '#3fb950' : '#f85149'}">${emaCheck}</span>
+            <span style="color:#8b949e">OBV</span><span style="text-align:right">${obvStr}</span>
+            <span style="color:#8b949e">成交量</span><span style="text-align:right">${volStr}</span>
+            <span style="color:#8b949e">勝率</span><span style="text-align:right">${r.best_rate}% (${r.best_total}次)</span>
+        </div>
+        <div style="background:#161b22;border-radius:6px;padding:10px;font-size:12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">
+            <div><div style="color:#8b949e;font-size:10px">止盈 (+${r.tp_pct}%)</div><div style="font-weight:600;margin-top:2px;color:#3fb950">${r.tp}</div></div>
+            <div><div style="color:#8b949e;font-size:10px">止損 (-${r.sl_pct}%)</div><div style="font-weight:600;margin-top:2px;color:#f85149">${r.sl}</div></div>
+            <div><div style="color:#8b949e;font-size:10px">風報比</div><div style="font-weight:600;margin-top:2px;color:#d29922">1:${r.rr}</div></div>
         </div>
     </div>`;
 }

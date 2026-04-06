@@ -51,6 +51,13 @@ except ImportError:
 FEE_RATE = 0.0005  # 0.05% per side (taker)
 MAX_POSITION_AGE = 7200  # 2 hours in seconds
 
+# Trend strategy constants
+MAX_TREND_POSITION_AGE = 7 * 24 * 3600  # 7 days
+TREND_TP_PCT = 0.10  # +10%
+TREND_SL_PCT = 0.08  # -8%
+TREND_TRAILING_TRIGGER = 0.03  # Trigger trailing stop after 3% profit
+TREND_TRAILING_STEP = 0.02    # Move SL up by 2% of entry when triggered
+
 # ===== 安全設定 =====
 class RiskManager:
     """風控管理器"""
@@ -66,7 +73,8 @@ class RiskManager:
         # 風控參數
         self.max_loss_pct = config.get("max_loss_pct", 10)         # 每日最大虧損 %
         self.max_position_pct = config.get("max_position_pct", 20) # 單次最大倉位 %
-        self.max_positions = config.get("max_positions", 2)        # 最大同時持倉
+        self.max_positions = config.get("max_positions", 2)        # 短線最大同時持倉
+        self.max_trend_positions = config.get("max_trend_positions", 1)  # 趨勢最大同時持倉
         self.max_consecutive_loss = config.get("max_consecutive_loss", 3)
         self.min_signal_strength = config.get("min_signal_strength", "MEDIUM")
         self.min_score = config.get("min_score", 80)
@@ -115,9 +123,16 @@ class RiskManager:
                 self.halt_reason = f"consecutive losses: {self.consecutive_losses}"
                 return False, f"連續虧損 {self.consecutive_losses} 次，停止交易"
 
-            # 持倉數檢查
-            if len(self.open_positions) >= self.max_positions:
-                return False, f"持倉數已達上限 {self.max_positions}"
+            # 持倉數檢查（短線和趨勢獨立計算）
+            is_trend = signal.get("strategy_type") == "trend"
+            short_positions = [p for p in self.open_positions if p.get("strategy_type") != "trend"]
+            trend_positions = [p for p in self.open_positions if p.get("strategy_type") == "trend"]
+            if is_trend:
+                if len(trend_positions) >= self.max_trend_positions:
+                    return False, f"趨勢持倉數已達上限 {self.max_trend_positions}"
+            else:
+                if len(short_positions) >= self.max_positions:
+                    return False, f"短線持倉數已達上限 {self.max_positions}"
 
             # 信號品質檢查（連虧時自動收緊門檻）
             dynamic_min_score = self._get_dynamic_min_score()
@@ -274,38 +289,63 @@ def check_positions(risk_mgr, client):
 
         should_close = False
         reason = ""
+        is_trend = pos.get("strategy_type") == "trend"
+        max_age = MAX_TREND_POSITION_AGE if is_trend else MAX_POSITION_AGE
 
-        # Position timeout check (2 hours)
+        # Position timeout check
         opened_at_str = pos.get("opened_at", "")
         if opened_at_str:
             try:
                 opened_time = datetime.strptime(opened_at_str, "%Y-%m-%d %H:%M:%S")
                 age_seconds = (datetime.now() - opened_time).total_seconds()
-                if age_seconds >= MAX_POSITION_AGE:
+                if age_seconds >= max_age:
                     should_close = True
                     reason = "TIMEOUT"
             except (ValueError, TypeError):
                 pass
 
-        # 移動止損：盈利 >= 1倍ATR時，SL移到進場價+成本（真正保本）
-        # 成本 = 滑價0.1%×2 + 手續費0.05%×2 ≈ 0.3%
-        atr = pos.get("atr", 0)
-        breakeven_margin = 0.003  # 0.3% 覆蓋來回滑價+手續費
-        if atr > 0:
+        if is_trend:
+            # Trend trailing stop: every 3% profit, move SL up 2%
             if side == "SELL":
-                profit_dist = entry - current
-                if profit_dist >= atr:
-                    breakeven_sl = entry * (1 - breakeven_margin)  # 進場價 - 0.3%
-                    if sl > breakeven_sl:
-                        pos["sl_price"] = breakeven_sl
-                        sl = breakeven_sl
+                profit_pct = (entry - current) / entry
             else:
-                profit_dist = current - entry
-                if profit_dist >= atr:
-                    breakeven_sl = entry * (1 + breakeven_margin)  # 進場價 + 0.3%
-                    if sl < breakeven_sl:
-                        pos["sl_price"] = breakeven_sl
-                        sl = breakeven_sl
+                profit_pct = (current - entry) / entry
+
+            if profit_pct > TREND_TRAILING_TRIGGER:
+                # Calculate how many 3% steps of profit we've achieved
+                steps = int(profit_pct / TREND_TRAILING_TRIGGER)
+                # Move SL by steps * 2% from entry
+                sl_move = steps * TREND_TRAILING_STEP
+                if side == "SELL":
+                    new_sl = entry * (1 - sl_move)
+                    if new_sl < sl:  # For shorts, lower SL is tighter
+                        pos["sl_price"] = new_sl
+                        sl = new_sl
+                else:
+                    new_sl = entry * (1 + sl_move)
+                    if new_sl > sl:  # For longs, higher SL is tighter
+                        pos["sl_price"] = new_sl
+                        sl = new_sl
+        else:
+            # 移動止損：盈利 >= 1倍ATR時，SL移到進場價+成本（真正保本）
+            # 成本 = 滑價0.1%×2 + 手續費0.05%×2 ≈ 0.3%
+            atr = pos.get("atr", 0)
+            breakeven_margin = 0.003  # 0.3% 覆蓋來回滑價+手續費
+            if atr > 0:
+                if side == "SELL":
+                    profit_dist = entry - current
+                    if profit_dist >= atr:
+                        breakeven_sl = entry * (1 - breakeven_margin)  # 進場價 - 0.3%
+                        if sl > breakeven_sl:
+                            pos["sl_price"] = breakeven_sl
+                            sl = breakeven_sl
+                else:
+                    profit_dist = current - entry
+                    if profit_dist >= atr:
+                        breakeven_sl = entry * (1 + breakeven_margin)  # 進場價 + 0.3%
+                        if sl < breakeven_sl:
+                            pos["sl_price"] = breakeven_sl
+                            sl = breakeven_sl
 
         if side == "SELL":  # 做空
             pnl_pct = (entry - current) / entry * 100

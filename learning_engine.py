@@ -112,6 +112,8 @@ class LearningEngine:
                     "追多": {"wins": 0, "losses": 0, "expired": 0},
                     "做空(寬)": {"wins": 0, "losses": 0, "expired": 0},
                     "抄底(寬)": {"wins": 0, "losses": 0, "expired": 0},
+                    "趨勢做多": {"wins": 0, "losses": 0, "expired": 0},
+                    "趨勢做空": {"wins": 0, "losses": 0, "expired": 0},
                 },
                 "regime_stats": {},  # {regime: {strategy: {wins, losses}}}
             },
@@ -137,7 +139,7 @@ class LearningEngine:
                                 "value": v, "updated": time.time()
                             }
                     # 確保結構完整
-                    for strat in ["做空", "抄底", "追多"]:
+                    for strat in ["做空", "抄底", "追多", "趨勢做多", "趨勢做空"]:
                         if strat not in self.data["stats"]["strategy_stats"]:
                             self.data["stats"]["strategy_stats"][strat] = {
                                 "wins": 0, "losses": 0, "expired": 0
@@ -220,7 +222,7 @@ class LearningEngine:
     # ---- 預測記錄 ----
 
     def record_prediction(self, symbol, strategy, entry_price, tp_price, sl_price,
-                          rate, score, regime="unknown"):
+                          rate, score, regime="unknown", ttl=None):
         """記錄一筆預測"""
         with self._lock:
             prediction = {
@@ -234,6 +236,7 @@ class LearningEngine:
                 "regime":      regime,
                 "timestamp":   time.time(),
                 "time_str":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "ttl":         ttl if ttl else self.PREDICTION_TTL,
             }
             self.data["pending"].append(prediction)
             self.data["stats"]["total_predictions"] += 1
@@ -259,7 +262,8 @@ class LearningEngine:
                 strategy = pred["strategy"]
 
                 # 超過 TTL → 過期
-                if age > self.PREDICTION_TTL:
+                pred_ttl = pred.get("ttl", self.PREDICTION_TTL)
+                if age > pred_ttl:
                     self._record_result(pred, "expired")
                     validated_count += 1
                     continue

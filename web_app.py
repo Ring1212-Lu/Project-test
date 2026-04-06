@@ -17,7 +17,8 @@ from datetime import datetime
 from flask import Flask, render_template, jsonify, request
 
 from crypto_monitor_v2 import (
-    fetch_tickers, fetch_and_analyze, analyze, get_btc_trend,
+    fetch_tickers, fetch_klines, fetch_and_analyze, analyze, get_btc_trend,
+    fetch_trend_candidates, analyze_trend,
     TOP15_PCT, TOP15_MAX, TOP_N, INTERVAL, MAX_WORKERS
 )
 from learning_engine import LearningEngine
@@ -92,6 +93,7 @@ state = {
     "last_update": None,
     "top_results": [],
     "all_results": [],
+    "trend_results": [],
     "pool_size": 0,
     "total_perps": 0,
     "gainer_top": None,
@@ -223,6 +225,84 @@ def run_trading_bot(initial_balance=100):
         btc_trend = get_btc_trend()
         btc_str = {1: "UP", -1: "DOWN", 0: "NEUTRAL"}.get(btc_trend, "?")
         add_trading_log(f"BTC 趨勢: {btc_str}")
+
+        # 趨勢掃描（每 120 輪 ≈ 4 小時）
+        trend_scan_interval = 120
+        if round_num % trend_scan_interval == 1 or round_num == 1:
+            try:
+                add_trading_log("[TREND] 交易機器人趨勢掃描...")
+                trend_tickers = get_shared_tickers()
+                trend_candidates = fetch_trend_candidates(trend_tickers)
+                trend_results_bot = []
+                for coin in trend_candidates:
+                    klines_4h = fetch_klines(coin["symbol"], interval="4h", limit=120)
+                    if klines_4h and len(klines_4h) >= 60:
+                        tres = analyze_trend(coin["symbol"], klines_4h, coin["change"], learner, btc_trend)
+                        if tres:
+                            trend_results_bot.append(tres)
+                trend_results_bot.sort(key=lambda x: x["best_score"], reverse=True)
+
+                # Try to open trend position (max 1 trend position at a time)
+                MAX_TREND_POSITION_AGE = 7 * 24 * 3600
+                trend_positions = [p for p in risk_mgr.open_positions if p.get("strategy_type") == "trend"]
+                if len(trend_positions) < 1:
+                    for tr in trend_results_bot[:3]:
+                        if tr["best_score"] < 80:
+                            continue
+                        sym_short = tr["symbol"].replace("_USDT_PERP", "")
+                        # Check cooldown
+                        cooldown_until = _symbol_cooldown.get(tr["symbol"], 0)
+                        if time.time() < cooldown_until:
+                            continue
+                        # 10% fixed sizing for trend
+                        size_usd = round(risk_mgr.current_balance * 0.10, 2)
+                        if size_usd < 1:
+                            continue
+                        strat = tr["best_strat"]
+                        side = "SELL" if strat == "趨勢做空" else "BUY"
+                        price = tr["price"]
+                        quantity = round(size_usd / price, 6) if price > 0 else 0
+                        if quantity <= 0:
+                            continue
+
+                        order_result = client.place_order(tr["symbol"], side, "MARKET", quantity)
+                        if order_result.get("result") or order_result.get("paper_mode"):
+                            slippage = 0.001
+                            entry_price = price * (1 + slippage) if side == "BUY" else price * (1 - slippage)
+                            pos = {
+                                "id": f"trend_{int(time.time()*1000)}",
+                                "symbol": tr["symbol"],
+                                "side": side,
+                                "strategy": strat,
+                                "strategy_type": "trend",
+                                "entry_price": entry_price,
+                                "tp_price": tr["tp"],
+                                "sl_price": tr["sl"],
+                                "size": size_usd,
+                                "quantity": quantity,
+                                "score": tr["best_score"],
+                                "signal_strength": tr.get("signal_strength", "WEAK"),
+                                "atr": tr.get("atr", 0),
+                                "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "trailing_sl": tr["sl"],
+                            }
+                            risk_mgr.record_open(pos)
+                            learner.record_prediction(
+                                symbol=tr["symbol"], strategy=strat,
+                                entry_price=price, tp_price=tr["tp"], sl_price=tr["sl"],
+                                rate=tr["best_rate"], score=tr["best_score"],
+                                regime=tr.get("regime", "unknown"),
+                                ttl=72 * 3600,  # 72h TTL for trend
+                            )
+                            add_trading_log(f"[TREND] OPEN {sym_short} {strat}({side}) "
+                                            f"{size_usd}U | Score:{tr['best_score']} | TP:{tr['tp']} SL:{tr['sl']}")
+                            break  # Max 1 trend position
+                        else:
+                            add_trading_log(f"[TREND] ORDER FAILED: {tr['symbol']}")
+                else:
+                    add_trading_log(f"[TREND] 已有趨勢持倉 ({len(trend_positions)})")
+            except Exception as e:
+                add_trading_log(f"[TREND] Error: {e}")
 
         # 抓行情（使用共享快取，減少 API 呼叫）
         tickers = get_shared_tickers()
@@ -475,6 +555,27 @@ def run_background_scan():
             btc_str = {1: "UP", -1: "DOWN", 0: "NEUTRAL"}.get(btc_trend, "?")
             add_log(f"BTC 大盤趨勢: {btc_str}")
 
+            # 趨勢掃描（每 120 輪 ≈ 4 小時執行一次）
+            trend_scan_interval = 120
+            if round_num % trend_scan_interval == 1 or round_num == 1:
+                try:
+                    add_log("[TREND] 開始趨勢掃描（4H K線）...")
+                    trend_candidates = fetch_trend_candidates(tickers)
+                    trend_results = []
+                    for coin in trend_candidates:
+                        klines_4h = fetch_klines(coin["symbol"], interval="4h", limit=120)
+                        if klines_4h and len(klines_4h) >= 60:
+                            tres = analyze_trend(coin["symbol"], klines_4h, coin["change"], learner, btc_trend)
+                            if tres:
+                                trend_results.append(tres)
+                    trend_results.sort(key=lambda x: x["best_score"], reverse=True)
+                    with state_lock:
+                        state["trend_results"] = trend_results[:3]
+                    add_log(f"[TREND] 趨勢掃描完成，{len(trend_results)} 個訊號，取前 {min(3, len(trend_results))} 個")
+                except Exception as e:
+                    print(f"[TREND] Error: {e}")
+                    add_log(f"[TREND] 趨勢掃描出錯: {e}")
+
             # 並行分析
             add_log(f"並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒）...")
             t_start = time.time()
@@ -556,7 +657,7 @@ def run_background_scan():
             overall_rate = round(stats["total_wins"] / decided * 100, 1) if decided > 0 else 0
 
             strat_stats = {}
-            for strat in ["做空", "抄底", "追多", "做空(寬)", "抄底(寬)"]:
+            for strat in ["做空", "抄底", "追多", "做空(寬)", "抄底(寬)", "趨勢做多", "趨勢做空"]:
                 s = stats["strategy_stats"].get(strat, {"wins": 0, "losses": 0, "expired": 0})
                 sw, sl_count = s["wins"], s["losses"]
                 st = sw + sl_count
@@ -656,11 +757,44 @@ def api_state():
             except Exception as e:
                 print(f"[API] 序列化結果出錯: {e}, keys={list(r.keys())}")
 
+        # 序列化 trend_results
+        trend = []
+        for r in state.get("trend_results", []):
+            try:
+                trend.append({
+                    "symbol": r["symbol"],
+                    "change24h": r["change24h"],
+                    "price": r["price"],
+                    "rsi": r.get("rsi", 0),
+                    "atr": r.get("atr", 0),
+                    "regime": r.get("regime", "unknown"),
+                    "obv_dir": r.get("obv_dir", 0),
+                    "ema20": r.get("ema20", 0),
+                    "ema50": r.get("ema50", 0),
+                    "ema_status": r.get("ema_status", ""),
+                    "vol_above_avg": r.get("vol_above_avg", False),
+                    "best_strat": r["best_strat"],
+                    "best_rate": r["best_rate"],
+                    "best_total": r["best_total"],
+                    "best_score": r["best_score"],
+                    "signal_strength": r.get("signal_strength", "WEAK"),
+                    "tp": r.get("tp", 0),
+                    "sl": r.get("sl", 0),
+                    "rr": r.get("rr", 0),
+                    "tp_pct": r.get("tp_pct", 0),
+                    "sl_pct": r.get("sl_pct", 0),
+                    "strategy_type": r.get("strategy_type", "trend"),
+                    "hold_days": r.get("hold_days", 3),
+                })
+            except Exception as e:
+                print(f"[API] 序列化趨勢結果出錯: {e}")
+
         return jsonify({
             "round": state["round"],
             "status": state["status"],
             "last_update": state["last_update"],
             "top_results": top,
+            "trend_results": trend,
             "all_count": len(state["all_results"]),
             "pool_size": state["pool_size"],
             "total_perps": state["total_perps"],
