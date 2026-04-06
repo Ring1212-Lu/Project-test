@@ -159,16 +159,23 @@ def _check_positions(risk_mgr, client):
     """Check positions with cooldown tracking for stop-losses"""
     # Snapshot open positions before check
     before_ids = {p["id"]: p for p in list(risk_mgr.open_positions)}
+    n_positions = len(before_ids)
     check_positions(risk_mgr, client)
     # Detect closed positions
     after_ids = {p["id"] for p in risk_mgr.open_positions}
     for pid, pos in before_ids.items():
         if pid not in after_ids:
-            # Position was closed — check if it was a loss
+            # Position was closed — log details
             pnl = pos.get("pnl", 0)
+            sym_short = pos.get("symbol", "").replace("_USDT_PERP", "")
+            strat = pos.get("strategy", "")
+            tag = "趨勢" if pos.get("strategy_type") == "trend" else "短線"
+            pnl_str = f"+{pnl:.4f}" if pnl >= 0 else f"{pnl:.4f}"
+            add_trading_log(f"[{tag}] CLOSE {sym_short} {strat} | PnL: {pnl_str}U | "
+                            f"進場:{pos.get('entry_price',0)} 出場:{pos.get('closed_at','')}")
             if pnl < 0:
                 _symbol_cooldown[pos["symbol"]] = time.time() + COOLDOWN_SECONDS
-                add_trading_log(f"[COOLDOWN] {pos['symbol']} cooldown {COOLDOWN_SECONDS}s after SL")
+                add_trading_log(f"[COOLDOWN] {sym_short} 冷卻 {COOLDOWN_SECONDS}s（止損後）")
 
 
 def run_position_checker(risk_mgr, client):
@@ -262,18 +269,27 @@ def run_trading_bot(initial_balance=100):
                 add_trading_log(f"[趨勢輪] 檢查 {len(trend_results_bot)} 個趨勢訊號...")
                 for tr in trend_results_bot[:3]:
                     sym_short = tr["symbol"].replace("_USDT_PERP", "")
+                    add_trading_log(f"[TREND] 評估: {sym_short} {tr['best_strat']} "
+                                    f"分數:{tr['best_score']} 勝率:{tr['best_rate']}% "
+                                    f"強度:{tr.get('signal_strength','?')} R:R:{tr.get('rr',0)}")
                     cooldown_until = _symbol_cooldown.get(tr["symbol"], 0)
                     if time.time() < cooldown_until:
+                        remaining = int(cooldown_until - time.time())
+                        add_trading_log(f"[TREND] {sym_short}: SKIP (cooldown {remaining}s)")
                         continue
                     size_usd = round(risk_mgr.current_balance * 0.10, 2)
                     if size_usd < 1:
+                        add_trading_log(f"[TREND] {sym_short}: SKIP (倉位太小 {size_usd}U)")
                         continue
                     strat = tr["best_strat"]
                     side = "SELL" if strat in SELL_STRATEGIES else "BUY"
                     price = tr["price"]
                     quantity = round(size_usd / price, 6) if price > 0 else 0
                     if quantity <= 0:
+                        add_trading_log(f"[TREND] {sym_short}: SKIP (quantity=0, price={price})")
                         continue
+                    add_trading_log(f"[TREND] {sym_short}: 嘗試開倉 {strat}({side}) "
+                                    f"{size_usd}U qty={quantity} price={price}")
                     slippage = 0.001
                     entry_price = price * (1 + slippage) if side == "BUY" else price * (1 - slippage)
                     # 先建立 pos，再用原子操作 check+open
@@ -381,8 +397,9 @@ def run_trading_bot(initial_balance=100):
                 except Exception:
                     pass
 
+        add_trading_log(f"[短線輪] 分析完成，{len(results)} 個有效信號（共 {len(pool)} 個分析）")
         if not results:
-            add_trading_log("無有效信號")
+            add_trading_log("無有效信號，跳過本輪")
             _update_trading_state(risk_mgr)
             save_trade_log(risk_mgr)
             time.sleep(INTERVAL)
@@ -416,7 +433,7 @@ def run_trading_bot(initial_balance=100):
 
             size_usd, pct = risk_mgr.calc_position_size(r)
             if size_usd < 1:
-                add_trading_log(f"{sym_short}: SKIP (倉位太�� {size_usd}U)")
+                add_trading_log(f"{sym_short}: SKIP (倉位太小 {size_usd}U)")
                 continue
 
             strat = r["best_strat"]
@@ -424,8 +441,10 @@ def run_trading_bot(initial_balance=100):
             price = r["price"]
             quantity = round(size_usd / price, 6) if price > 0 else 0
             if quantity <= 0:
+                add_trading_log(f"{sym_short}: SKIP (quantity=0, price={price})")
                 continue
 
+            add_trading_log(f"{sym_short}: 嘗試開倉 {strat}({side}) {size_usd}U({pct}%) qty={quantity}")
             slippage = 0.001
             entry_price = price * (1 + slippage) if side == "BUY" else price * (1 - slippage)
             pos = {
@@ -475,8 +494,12 @@ def run_trading_bot(initial_balance=100):
         learner.save()
 
         status = risk_mgr.get_status()
-        add_trading_log(f"Balance: {status['balance']}U | Open: {status['open_positions']} | "
-                        f"Today: {status['daily_pnl']:+.2f}U")
+        short_pos = sum(1 for p in risk_mgr.open_positions if p.get("strategy_type") != "trend")
+        trend_pos = sum(1 for p in risk_mgr.open_positions if p.get("strategy_type") == "trend")
+        add_trading_log(f"Balance: {status['balance']}U | "
+                        f"持倉: 短線{short_pos}/趨勢{trend_pos} | "
+                        f"Today: {status['daily_pnl']:+.2f}U | "
+                        f"WR: {status['win_rate']}% ({status['total_trades']}筆)")
 
         time.sleep(INTERVAL)
 

@@ -347,6 +347,9 @@ def check_positions(risk_mgr, client):
             except (ValueError, TypeError):
                 pass
 
+        sym_short = sym.replace("_USDT_PERP", "")
+        tag = "[趨勢]" if is_trend else "[短線]"
+
         if is_trend:
             # 趨勢跟蹤止損：基於當前價格，每 3% 利潤步進收緊
             if side == "SELL":
@@ -356,42 +359,46 @@ def check_positions(risk_mgr, client):
 
             if profit_pct > TREND_TRAILING_TRIGGER:
                 steps = int(profit_pct / TREND_TRAILING_TRIGGER)
-                # 基於當前價格計算 SL，保留 2% 的回撤空間
-                trail_pct = TREND_TRAILING_STEP  # 2% buffer from current price
+                trail_pct = TREND_TRAILING_STEP
                 if side == "SELL":
-                    # 做空：SL 在當前價格上方 2%（鎖利）
                     new_sl = current * (1 + trail_pct)
-                    # 只允許 SL 向下移動（更緊），不允許往上退
                     if new_sl < sl:
+                        old_sl = sl
                         pos["sl_price"] = round(new_sl, 6)
                         sl = pos["sl_price"]
+                        print(f"{tag} {sym_short} 跟蹤止損更新: {old_sl:.4f} → {sl:.4f} "
+                              f"(利潤 {profit_pct*100:.1f}%, {steps}步)")
                 else:
-                    # 做多：SL 在當前價格下方 2%（鎖利）
                     new_sl = current * (1 - trail_pct)
-                    # 只允許 SL 向上移動（更緊），不允許往下退
                     if new_sl > sl:
+                        old_sl = sl
                         pos["sl_price"] = round(new_sl, 6)
                         sl = pos["sl_price"]
+                        print(f"{tag} {sym_short} 跟蹤止損更新: {old_sl:.4f} → {sl:.4f} "
+                              f"(利潤 {profit_pct*100:.1f}%, {steps}步)")
         else:
             # 移動止損：盈利 >= 1倍ATR時，SL移到進場價+成本（真正保本）
-            # 成本 = 滑價0.1%×2 + 手續費0.05%×2 ≈ 0.3%
             atr = pos.get("atr", 0)
-            breakeven_margin = 0.003  # 0.3% 覆蓋來回滑價+手續費
+            breakeven_margin = 0.003
             if atr > 0:
                 if side == "SELL":
                     profit_dist = entry - current
                     if profit_dist >= atr:
-                        breakeven_sl = entry * (1 - breakeven_margin)  # 進場價 - 0.3%
+                        breakeven_sl = entry * (1 - breakeven_margin)
                         if sl > breakeven_sl:
+                            old_sl = sl
                             pos["sl_price"] = breakeven_sl
                             sl = breakeven_sl
+                            print(f"{tag} {sym_short} 保本止損觸發: {old_sl:.6f} → {sl:.6f}")
                 else:
                     profit_dist = current - entry
                     if profit_dist >= atr:
-                        breakeven_sl = entry * (1 + breakeven_margin)  # 進場價 + 0.3%
+                        breakeven_sl = entry * (1 + breakeven_margin)
                         if sl < breakeven_sl:
+                            old_sl = sl
                             pos["sl_price"] = breakeven_sl
                             sl = breakeven_sl
+                            print(f"{tag} {sym_short} 保本止損觸發: {old_sl:.6f} → {sl:.6f}")
 
         if side == "SELL":  # 做空
             pnl_pct = (entry - current) / entry * 100
@@ -426,9 +433,24 @@ def check_positions(risk_mgr, client):
             pnl_str = f"+{pnl:.4f}" if pnl >= 0 else f"{pnl:.4f}"
             pnl_color = 'green' if pnl >= 0 else 'red'
 
-            print(color(f"\n[CLOSE] {sym} {reason} | PnL: {pnl_str}U ({pnl_pct:+.2f}%)", pnl_color))
-            print(f"   Entry: {entry} -> Exit: {current}")
+            print(color(f"\n{tag} [CLOSE] {sym_short} {reason} | PnL: {pnl_str}U ({pnl_pct:+.2f}%)", pnl_color))
+            print(f"   策略: {pos.get('strategy','')} | 方向: {side} | "
+                  f"進場: {entry} → 出場: {current} | TP:{tp} SL:{sl}")
+            if is_trend:
+                age_str = f"{age_seconds/3600:.1f}h" if opened_at_str else "?"
+                print(f"   持倉時間: {age_str} | 手續費: {fee:.4f}U")
             save_trade_log(risk_mgr)
+        else:
+            # 持倉監控摘要（每次檢查都記錄，方便追蹤）
+            if side == "SELL":
+                pnl_pct = (entry - current) / entry * 100
+            else:
+                pnl_pct = (current - entry) / entry * 100
+            dist_tp = abs(current - tp) / current * 100
+            dist_sl = abs(current - sl) / current * 100
+            print(f"{tag} {sym_short} 持倉中: {pnl_pct:+.2f}% | "
+                  f"距TP:{dist_tp:.1f}% 距SL:{dist_sl:.1f}% | "
+                  f"Price:{current} SL:{sl}")
 
 
 # ===== 主交易循環 =====
