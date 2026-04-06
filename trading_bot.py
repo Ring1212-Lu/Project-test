@@ -287,20 +287,22 @@ def check_positions(risk_mgr, client):
             except (ValueError, TypeError):
                 pass
 
-        # 移動止損：盈利 >= 1倍ATR時，SL移到進場價+0.1%（保本）
+        # 移動止損：盈利 >= 1倍ATR時，SL移到進場價+成本（真正保本）
+        # 成本 = 滑價0.1%×2 + 手續費0.05%×2 ≈ 0.3%
         atr = pos.get("atr", 0)
+        breakeven_margin = 0.003  # 0.3% 覆蓋來回滑價+手續費
         if atr > 0:
             if side == "SELL":
                 profit_dist = entry - current
                 if profit_dist >= atr:
-                    breakeven_sl = entry * 0.999  # 進場價 - 0.1%
+                    breakeven_sl = entry * (1 - breakeven_margin)  # 進場價 - 0.3%
                     if sl > breakeven_sl:
                         pos["sl_price"] = breakeven_sl
                         sl = breakeven_sl
             else:
                 profit_dist = current - entry
                 if profit_dist >= atr:
-                    breakeven_sl = entry * 1.001  # 進場價 + 0.1%
+                    breakeven_sl = entry * (1 + breakeven_margin)  # 進場價 + 0.3%
                     if sl < breakeven_sl:
                         pos["sl_price"] = breakeven_sl
                         sl = breakeven_sl
