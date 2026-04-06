@@ -260,7 +260,8 @@ def run_trading_bot(initial_balance=100):
         held_symbols = {p["symbol"] for p in risk_mgr.open_positions}
         pool = [c for c in pool if c["symbol"] not in held_symbols]
 
-        add_trading_log(f"分析池 {len(pool)} 個（排除已持倉 {len(held_symbols)}）")
+        pool_syms = [c["symbol"].replace("_USDT_PERP","") for c in pool[:6]]
+        add_trading_log(f"分析池 {len(pool)} 個（排除已持倉 {len(held_symbols)}）前6: {','.join(pool_syms)}")
 
         # 並行分析
         results = []
@@ -288,6 +289,13 @@ def run_trading_bot(initial_balance=100):
 
         # 嘗試開倉
         opened = 0
+        # 日誌：顯示所有候選訊號
+        for r in results[:TOP_N]:
+            sym_short = r['symbol'].replace('_USDT_PERP', '')
+            add_trading_log(f"候選: {sym_short} {r['best_strat']} "
+                           f"分數:{r['best_score']} 勝率:{r['best_rate']}% "
+                           f"強度:{r['signal_strength']} 風報比:{r.get('rr',0)}")
+
         for r in results[:TOP_N]:
             sym_short = r['symbol'].replace('_USDT_PERP', '')
 
@@ -310,6 +318,7 @@ def run_trading_bot(initial_balance=100):
 
             size_usd, pct = risk_mgr.calc_position_size(r)
             if size_usd < 1:
+                add_trading_log(f"{sym_short}: SKIP (倉位太小 {size_usd}U)")
                 continue
 
             strat = r["best_strat"]
