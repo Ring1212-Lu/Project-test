@@ -568,29 +568,54 @@ def run_trading_loop(client, risk_mgr, learner):
                 print(f"  {sym_short}: SKIP (24h跌{r['change24h']:.1f}%，暴跌中不做多)")
                 continue
 
-            can_open, reason = risk_mgr.can_open_position(r)
-            if not can_open:
+            # 預先構建 position dict（try_open_position 需要）
+            strat = r["best_strat"]
+            SELL_STRATS = {"做空", "做空(寬)", "趨勢做空"}
+            side = "SELL" if strat in SELL_STRATS else "BUY"
+            price = r["price"]
+            is_trend = strat.startswith("趨勢")
+
+            pos = {
+                "id": f"pos_{int(time.time()*1000)}",
+                "symbol": r["symbol"],
+                "side": side,
+                "strategy": strat,
+                "strategy_type": "trend" if is_trend else "short",
+                "entry_price": price,
+                "tp_price": r["tp"],
+                "sl_price": r["sl"],
+                "atr": r.get("atr", 0),
+                "size": 0,  # updated after calc
+                "quantity": 0,  # updated after calc
+                "score": r["best_score"],
+                "signal_strength": r["signal_strength"],
+                "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+
+            ok, reason = risk_mgr.try_open_position(r, pos)
+            if not ok:
                 print(f"  {sym_short}: SKIP ({reason})")
                 continue
 
             # 計算倉位
             size_usd, pct = risk_mgr.calc_position_size(r)
             if size_usd < 1:
+                # 回滾: 移除已登記的倉位
+                with risk_mgr._lock:
+                    risk_mgr.open_positions = [p for p in risk_mgr.open_positions if p["id"] != pos["id"]]
                 print(f"  {r['symbol']}: SKIP (倉位太小 {size_usd}U)")
                 continue
 
-            # 決定方向
-            strat = r["best_strat"]
-            if strat == "做空":
-                side = "SELL"
-            else:
-                side = "BUY"
-
             # 計算數量
-            price = r["price"]
             quantity = round(size_usd / price, 6) if price > 0 else 0
             if quantity <= 0:
+                with risk_mgr._lock:
+                    risk_mgr.open_positions = [p for p in risk_mgr.open_positions if p["id"] != pos["id"]]
                 continue
+
+            # 更新 pos 的 size/quantity
+            pos["size"] = size_usd
+            pos["quantity"] = quantity
 
             # 下單
             print(color(f"\n[OPEN] {r['symbol']} | {strat} ({side}) | "
@@ -600,22 +625,6 @@ def run_trading_loop(client, risk_mgr, learner):
             order_result = client.place_order(r["symbol"], side, "MARKET", quantity)
 
             if order_result.get("result") or order_result.get("paper_mode"):
-                pos = {
-                    "id": f"pos_{int(time.time()*1000)}",
-                    "symbol": r["symbol"],
-                    "side": side,
-                    "strategy": strat,
-                    "entry_price": price,
-                    "tp_price": r["tp"],
-                    "sl_price": r["sl"],
-                    "size": size_usd,
-                    "quantity": quantity,
-                    "score": r["best_score"],
-                    "signal_strength": r["signal_strength"],
-                    "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                }
-                risk_mgr.record_open(pos)
-
                 # 記錄學習預測
                 learner.record_prediction(
                     symbol=r["symbol"], strategy=strat,
@@ -625,6 +634,9 @@ def run_trading_loop(client, risk_mgr, learner):
                 )
                 opened += 1
             else:
+                # 下單失敗，回滾倉位
+                with risk_mgr._lock:
+                    risk_mgr.open_positions = [p for p in risk_mgr.open_positions if p["id"] != pos["id"]]
                 print(color(f"   ORDER FAILED: {order_result}", 'red'))
 
         if opened > 0:

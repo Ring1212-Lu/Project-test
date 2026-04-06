@@ -247,8 +247,8 @@ def run_trading_bot(initial_balance=100):
         round_type = "趨勢" if is_trend_round else "短線"
         add_trading_log(f"=== 交易掃描第 {round_num} 輪 ({round_type}) ===")
 
-        # 檢查現有持倉
-        _check_positions(risk_mgr, client)
+        # 持倉由 position_checker 執行緒獨立檢查（每 30s/300s），
+        # 避免與 bot 主迴圈雙重平倉導致餘額錯誤
 
         # 驗證學習預測
         validated = learner.validate_pending_predictions()
