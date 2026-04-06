@@ -87,18 +87,19 @@ def send_discord_message(message):
         pass  # 通知失敗不影響主流程
 
 
-def notify_strong_signals(results):
+def notify_strong_signals(results, tag="短線"):
     """掃描完成後，將 STRONG 訊號透過 Discord 通知"""
     strong = [r for r in results if r.get("signal_strength") == "STRONG"]
     if not strong:
         return
-    lines = ["🔔 **強訊號通知 ({} 個)**".format(len(strong))]
+    lines = ["🔔 **{} 強訊號通知 ({} 個)**".format(tag, len(strong))]
     for r in strong[:5]:  # 最多通知 5 個
         sym = r["symbol"].replace("_USDT_PERP", "")
+        hold = f"持倉 {r.get('hold_days', '?')} 天" if r.get("strategy_type") == "trend" else ""
         lines.append(
-            f"```\n{sym} | {r['best_strat']} | "
+            f"```\n[{tag}] {sym} | {r['best_strat']} | "
             f"分數:{r['best_score']} 勝率:{r['best_rate']}%\n"
-            f"價格:{r['price']}  TP:{r['tp']}  SL:{r['sl']}\n```"
+            f"價格:{r['price']}  TP:{r['tp']}  SL:{r['sl']}  {hold}\n```"
         )
     send_discord_message("\n".join(lines))
 
@@ -685,7 +686,10 @@ def run_background_scan():
                         state["trend_scan_time"] = datetime.now().strftime("%H:%M:%S")
                     add_log(f"[趨勢] 趨勢���描完成，{len(trend_results)} 個訊號，取前 {min(5, len(trend_results))} 個")
 
-                    # 記錄趨���預測
+                    # Discord 通知趨勢強訊號
+                    notify_strong_signals(trend_results[:5], tag="趨勢")
+
+                    # 記錄趨勢預測
                     for r in trend_results[:3]:
                         learner.record_prediction(
                             symbol=r["symbol"], strategy=r["best_strat"],
