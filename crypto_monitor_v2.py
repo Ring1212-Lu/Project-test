@@ -47,15 +47,15 @@ BASE_URL   = "https://fapi.binance.com/fapi/v1/klines"
 TICK_URL   = "https://fapi.binance.com/fapi/v1/ticker/24hr"
 INTERVAL   = 120       # 秒，每輪間隔（2分鐘）
 TOP_N      = 3         # 最終回報前幾名
-MIN_SIG    = 3         # 最低訊號次數門檻
+MIN_SIG    = 2         # 最低訊號次數門檻（降低讓高勝率的做空/抄底不被淘汰）
 TOP15_PCT  = 0.15      # 每側（漲/跌）取百分比
 TOP15_MAX  = 12        # 每側最多取幾個
 MAX_WORKERS = 6        # 並行執行緒數
 MAX_RETRIES = 3        # API 請求重試次數
 
 # ATR 倍數（自適應止盈止損）
-ATR_TP_MULT = {"做空": 2.0, "抄底": 2.5, "追多": 3.0, "做空(寬)": 2.0, "抄底(寬)": 2.5}
-ATR_SL_MULT = {"做空": 1.2, "抄底": 1.5, "追多": 1.5, "做空(寬)": 1.2, "抄底(寬)": 1.5}
+ATR_TP_MULT = {"做空": 1.5, "抄底": 2.0, "追多": 2.0, "做空(寬)": 1.5, "抄底(寬)": 2.0}
+ATR_SL_MULT = {"做空": 1.8, "抄底": 2.0, "追多": 2.0, "做空(寬)": 1.8, "抄底(寬)": 2.0}
 
 LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_data.json")
 

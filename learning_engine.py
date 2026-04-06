@@ -85,11 +85,12 @@ class LearningEngine:
     MAX_PENDING = 500
 
     # 市場狀態對策略的適配分數
+    # 基於實際數據更新：做空各regime 74-100%，追多各regime <40%
     REGIME_BONUS = {
-        MarketRegime.TRENDING_UP:   {"做空": 0.7, "抄底": 0.9, "追多": 1.3},
-        MarketRegime.TRENDING_DOWN: {"做空": 1.3, "抄底": 1.1, "追多": 0.6},
-        MarketRegime.RANGING:       {"做空": 1.0, "抄底": 1.2, "追多": 0.8},
-        MarketRegime.VOLATILE:      {"做空": 0.9, "抄底": 0.8, "追多": 0.7},
+        MarketRegime.TRENDING_UP:   {"做空": 1.1, "抄底": 0.9, "追多": 0.7},   # 做空78%↑, 追多28%↓
+        MarketRegime.TRENDING_DOWN: {"做空": 1.4, "抄底": 1.4, "追多": 0.5},   # 做空100%, 抄底100%
+        MarketRegime.RANGING:       {"做空": 1.1, "抄底": 1.2, "追多": 0.7},   # 做空80%, 追多38%
+        MarketRegime.VOLATILE:      {"做空": 1.0, "抄底": 0.8, "追多": 0.6},   # 做空74%, 追多29%
     }
 
     def __init__(self, filepath):

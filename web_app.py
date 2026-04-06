@@ -341,6 +341,7 @@ def run_trading_bot(initial_balance=100):
                     "quantity": quantity,
                     "score": r["best_score"],
                     "signal_strength": r["signal_strength"],
+                    "atr": r.get("atr", 0),
                     "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
                 risk_mgr.record_open(pos)

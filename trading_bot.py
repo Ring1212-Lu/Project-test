@@ -153,9 +153,17 @@ class RiskManager:
         return self.min_score  # 正常門檻
 
     def calc_position_size(self, signal):
-        """計算開倉大小（基於 Kelly 和風控限制）"""
+        """計算開倉大小（基於信號強度動態調整）"""
+        strength = signal.get("signal_strength", "WEAK")
+        # STRONG: 用 max_position_pct(20%), MEDIUM: 用一半(10%)
+        if strength == "STRONG":
+            base_pct = self.max_position_pct
+        else:
+            base_pct = self.max_position_pct / 2
+
         kelly = signal.get("kelly_pct", 10)
-        max_pct = min(kelly, self.max_position_pct)
+        max_pct = min(kelly, base_pct)
+        max_pct = max(max_pct, 5)  # 最低 5%
         size_usd = self.current_balance * (max_pct / 100)
         return round(size_usd, 2), max_pct
 
@@ -278,6 +286,24 @@ def check_positions(risk_mgr, client):
                     reason = "TIMEOUT"
             except (ValueError, TypeError):
                 pass
+
+        # 移動止損：盈利 >= 1倍ATR時，SL移到進場價+0.1%（保本）
+        atr = pos.get("atr", 0)
+        if atr > 0:
+            if side == "SELL":
+                profit_dist = entry - current
+                if profit_dist >= atr:
+                    breakeven_sl = entry * 0.999  # 進場價 - 0.1%
+                    if sl > breakeven_sl:
+                        pos["sl_price"] = breakeven_sl
+                        sl = breakeven_sl
+            else:
+                profit_dist = current - entry
+                if profit_dist >= atr:
+                    breakeven_sl = entry * 1.001  # 進場價 + 0.1%
+                    if sl < breakeven_sl:
+                        pos["sl_price"] = breakeven_sl
+                        sl = breakeven_sl
 
         if side == "SELL":  # 做空
             pnl_pct = (entry - current) / entry * 100
