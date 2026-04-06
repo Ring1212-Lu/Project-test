@@ -45,7 +45,7 @@ except ImportError:
 # 幣安合約 API（比派網限流寬鬆，價格幾乎一致）
 BASE_URL   = "https://fapi.binance.com/fapi/v1/klines"
 TICK_URL   = "https://fapi.binance.com/fapi/v1/ticker/24hr"
-INTERVAL   = 60        # 秒，每輪間隔（短線/趨勢交替，各隔2分鐘）
+INTERVAL   = 60        # 秒，standalone 模式用。web_app 改用 SCAN_INTERVAL=45
 TOP_N      = 3         # 最終回報前幾名
 MIN_SIG    = 2         # 最低訊號次數門檻（降低讓高勝率的做空/抄底不被淘汰）
 TOP15_PCT  = 0.15      # 每側（漲/跌）取百分比
@@ -355,7 +355,7 @@ def _create_session():
         status_forcelist=[500, 502, 503, 504],  # 429 不自動重試，由節流控制
         allowed_methods=["GET"],
     )
-    adapter = HTTPAdapter(max_retries=retry, pool_connections=3, pool_maxsize=3)
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=8, pool_maxsize=8)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     return session
