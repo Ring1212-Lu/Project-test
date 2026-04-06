@@ -11,13 +11,14 @@ import os
 import json
 import threading
 import time
+import traceback
 import requests as req_lib
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Flask, render_template, jsonify, request
 
 from crypto_monitor_v2 import (
-    fetch_tickers, fetch_klines, fetch_and_analyze, analyze, get_btc_trend,
+    fetch_tickers, fetch_klines, fetch_and_analyze, get_btc_trend,
     fetch_trend_candidates, analyze_trend,
     TOP15_PCT, TOP15_MAX, TOP_N, MAX_WORKERS
 )
@@ -287,6 +288,9 @@ def run_trading_bot(initial_balance=100):
         if is_trend_check:
             with state_lock:
                 trend_results_bot = list(state.get("trend_results", []))
+
+            # 排除已持倉幣種（防止同一信號重複開倉）
+            trend_results_bot = [tr for tr in trend_results_bot if tr["symbol"] not in held_symbols]
 
             if trend_results_bot:
                 add_trading_log(f"[趨勢] 檢查 {len(trend_results_bot)} 個趨勢訊號...")
@@ -561,13 +565,18 @@ def run_background_scan():
             add_log(f"BTC 大盤趨勢: {btc_str}")
 
             # === 每輪都跑短線，每 TREND_EVERY_N 輪加跑趨勢 ===
-            # 4H K 線閉合觸發：UTC 整點 (00/04/08/12/16/20) 後 2 分鐘內強制掃描趨勢
-            from datetime import timezone
+            # 4H K 線閉合觸發：UTC 整點 (00/04/08/12/16/20) 後 3 分鐘內強制掃描（同一週期只觸發一次）
             utc_now = datetime.now(timezone.utc)
-            is_4h_candle_close = (utc_now.hour % 4 == 0 and utc_now.minute < 3)
-            is_trend_round = (round_num % TREND_EVERY_N == 0) or is_4h_candle_close
-            if is_4h_candle_close and (round_num % TREND_EVERY_N != 0):
+            current_4h_slot = utc_now.hour // 4  # 0-5，每 4 小時一個 slot
+            is_4h_candle_close = (
+                utc_now.hour % 4 == 0
+                and utc_now.minute < 3
+                and getattr(run_background_scan, '_last_4h_slot', -1) != current_4h_slot
+            )
+            if is_4h_candle_close:
+                run_background_scan._last_4h_slot = current_4h_slot
                 add_log(f"[趨勢] 4H K 線閉合觸發（UTC {utc_now.strftime('%H:%M')}）")
+            is_trend_round = (round_num % TREND_EVERY_N == 0) or is_4h_candle_close
 
             # ── 短線���描（1M K線，每輪都跑）──
             add_log(f"[短線] 並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒��...")
@@ -729,7 +738,6 @@ def run_background_scan():
         except Exception as e:
             consecutive_errors += 1
             err_msg = f"掃描出錯: {type(e).__name__}: {e}"
-            import traceback
             print(f"[SCAN ERROR] {err_msg}")
             traceback.print_exc()
             add_log(f"[ERROR] {err_msg}")
@@ -846,7 +854,6 @@ def api_state():
             "interval": SCAN_INTERVAL,
         })
   except Exception as e:
-    import traceback
     print(f"[API STATE ERROR] {e}")
     traceback.print_exc()
     return jsonify({"error": str(e), "round": 0, "status": "error", "top_results": [], "all_count": 0,
