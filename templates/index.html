@@ -1153,10 +1153,14 @@ function updateBotUI(data) {
         </tr></thead><tbody>`;
         positions.forEach(p => {
             const sideColor = p.side === 'BUY' ? '#3fb950' : '#f85149';
+            const isTrend = p.strategy_type === 'trend';
+            const typeTag = isTrend
+                ? '<span style="font-size:9px;background:rgba(56,139,253,0.15);color:#388bfd;padding:1px 4px;border-radius:3px;margin-left:4px">趨勢</span>'
+                : '<span style="font-size:9px;background:rgba(240,136,62,0.15);color:#f0883e;padding:1px 4px;border-radius:3px;margin-left:4px">短線</span>';
             posHTML += `<tr>
                 <td style="font-weight:600;color:#58a6ff">${(p.symbol||'').replace('_USDT_PERP','')}</td>
                 <td style="color:${sideColor}">${p.side}</td>
-                <td>${p.strategy}</td>
+                <td>${p.strategy}${typeTag}</td>
                 <td>${p.entry_price}</td>
                 <td style="color:#3fb950">${p.tp_price}</td>
                 <td style="color:#f85149">${p.sl_price}</td>

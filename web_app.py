@@ -242,65 +242,68 @@ def run_trading_bot(initial_balance=100):
                             trend_results_bot.append(tres)
                 trend_results_bot.sort(key=lambda x: x["best_score"], reverse=True)
 
-                # Try to open trend position (max 1 trend position at a time)
-                MAX_TREND_POSITION_AGE = 7 * 24 * 3600
-                trend_positions = [p for p in risk_mgr.open_positions if p.get("strategy_type") == "trend"]
-                if len(trend_positions) < 1:
-                    for tr in trend_results_bot[:3]:
-                        if tr["best_score"] < 80:
-                            continue
-                        sym_short = tr["symbol"].replace("_USDT_PERP", "")
-                        # Check cooldown
-                        cooldown_until = _symbol_cooldown.get(tr["symbol"], 0)
-                        if time.time() < cooldown_until:
-                            continue
-                        # 10% fixed sizing for trend
-                        size_usd = round(risk_mgr.current_balance * 0.10, 2)
-                        if size_usd < 1:
-                            continue
-                        strat = tr["best_strat"]
-                        side = "SELL" if strat == "趨勢做空" else "BUY"
-                        price = tr["price"]
-                        quantity = round(size_usd / price, 6) if price > 0 else 0
-                        if quantity <= 0:
-                            continue
+                # 嘗試開趨勢倉位（使用 RiskManager 獨立限制）
+                for tr in trend_results_bot[:3]:
+                    if tr["best_score"] < 80:
+                        continue
+                    # 用 can_open_position 做統一風控檢查（含趨勢獨立持倉限制）
+                    trend_signal = {**tr, "strategy_type": "trend"}
+                    can_open, reason = risk_mgr.can_open_position(trend_signal)
+                    if not can_open:
+                        add_trading_log(f"[TREND] 無法開倉: {reason}")
+                        if "持倉數已達上限" in reason:
+                            break  # 趨勢倉位已滿，不用再嘗試
+                        continue
+                    sym_short = tr["symbol"].replace("_USDT_PERP", "")
+                    # Check cooldown
+                    cooldown_until = _symbol_cooldown.get(tr["symbol"], 0)
+                    if time.time() < cooldown_until:
+                        continue
+                    # 10% fixed sizing for trend
+                    size_usd = round(risk_mgr.current_balance * 0.10, 2)
+                    if size_usd < 1:
+                        continue
+                    strat = tr["best_strat"]
+                    side = "SELL" if "做空" in strat else "BUY"
+                    price = tr["price"]
+                    quantity = round(size_usd / price, 6) if price > 0 else 0
+                    if quantity <= 0:
+                        continue
 
-                        order_result = client.place_order(tr["symbol"], side, "MARKET", quantity)
-                        if order_result.get("result") or order_result.get("paper_mode"):
-                            slippage = 0.001
-                            entry_price = price * (1 + slippage) if side == "BUY" else price * (1 - slippage)
-                            pos = {
-                                "id": f"trend_{int(time.time()*1000)}",
-                                "symbol": tr["symbol"],
-                                "side": side,
-                                "strategy": strat,
-                                "strategy_type": "trend",
-                                "entry_price": entry_price,
-                                "tp_price": tr["tp"],
-                                "sl_price": tr["sl"],
-                                "size": size_usd,
-                                "quantity": quantity,
-                                "score": tr["best_score"],
-                                "signal_strength": tr.get("signal_strength", "WEAK"),
-                                "atr": tr.get("atr", 0),
-                                "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "trailing_sl": tr["sl"],
-                            }
-                            risk_mgr.record_open(pos)
-                            learner.record_prediction(
-                                symbol=tr["symbol"], strategy=strat,
-                                entry_price=price, tp_price=tr["tp"], sl_price=tr["sl"],
-                                rate=tr["best_rate"], score=tr["best_score"],
-                                regime=tr.get("regime", "unknown"),
-                                ttl=72 * 3600,  # 72h TTL for trend
-                            )
-                            add_trading_log(f"[TREND] OPEN {sym_short} {strat}({side}) "
-                                            f"{size_usd}U | Score:{tr['best_score']} | TP:{tr['tp']} SL:{tr['sl']}")
-                            break  # Max 1 trend position
-                        else:
-                            add_trading_log(f"[TREND] ORDER FAILED: {tr['symbol']}")
-                else:
-                    add_trading_log(f"[TREND] 已有趨勢持倉 ({len(trend_positions)})")
+                    order_result = client.place_order(tr["symbol"], side, "MARKET", quantity)
+                    if order_result.get("result") or order_result.get("paper_mode"):
+                        slippage = 0.001
+                        entry_price = price * (1 + slippage) if side == "BUY" else price * (1 - slippage)
+                        pos = {
+                            "id": f"trend_{int(time.time()*1000)}",
+                            "symbol": tr["symbol"],
+                            "side": side,
+                            "strategy": strat,
+                            "strategy_type": "trend",
+                            "entry_price": entry_price,
+                            "tp_price": tr["tp"],
+                            "sl_price": tr["sl"],
+                            "size": size_usd,
+                            "quantity": quantity,
+                            "score": tr["best_score"],
+                            "signal_strength": tr.get("signal_strength", "WEAK"),
+                            "atr": tr.get("atr", 0),
+                            "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "trailing_sl": tr["sl"],
+                        }
+                        risk_mgr.record_open(pos)
+                        learner.record_prediction(
+                            symbol=tr["symbol"], strategy=strat,
+                            entry_price=price, tp_price=tr["tp"], sl_price=tr["sl"],
+                            rate=tr["best_rate"], score=tr["best_score"],
+                            regime=tr.get("regime", "unknown"),
+                            ttl=72 * 3600,  # 72h TTL for trend
+                        )
+                        add_trading_log(f"[TREND] OPEN {sym_short} {strat}({side}) "
+                                        f"{size_usd}U | Score:{tr['best_score']} | TP:{tr['tp']} SL:{tr['sl']}")
+                        break  # 每次掃描最多開 1 個趨勢倉
+                    else:
+                        add_trading_log(f"[TREND] ORDER FAILED: {tr['symbol']}")
             except Exception as e:
                 add_trading_log(f"[TREND] Error: {e}")
 
@@ -402,7 +405,7 @@ def run_trading_bot(initial_balance=100):
                 continue
 
             strat = r["best_strat"]
-            side = "SELL" if strat == "做空" else "BUY"
+            side = "SELL" if "做空" in strat else "BUY"
             price = r["price"]
             quantity = round(size_usd / price, 6) if price > 0 else 0
             if quantity <= 0:
