@@ -542,6 +542,14 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
     # OBV 趨勢
     obv_dir = obv_trend(obv_vals)
 
+    # 連續下跌根數（用於抄底保護）
+    consec_down = 0
+    for j in range(len(closes) - 1, 0, -1):
+        if closes[j] < closes[j - 1]:
+            consec_down += 1
+        else:
+            break
+
     # RSI 背離偵測
     divergence = detect_rsi_divergence(closes, rsi_vals)
 
@@ -647,14 +655,27 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
                 stats["做空(寬)"]["win"] += 1
 
         # ---- 抄底條件（嚴格版，RSI<35, MFI<40）----
-        if rsi_prev < rsi_long_th and rsi_cur > rsi_prev and mfi_cur < 40 and macd_up:
+        # 回測用局部 OBV 方向（前 3 根）
+        _bt_obv_ok = (ci >= 3 and ci < len(obv_vals) and
+                      obv_vals[ci] >= obv_vals[ci - 3])
+        # 回測用局部連跌保護（連跌 ≥3 根不抄底）
+        _bt_consec = 0
+        for _j in range(ci, max(ci - 5, 0), -1):
+            if _j > 0 and closes[_j] < closes[_j - 1]:
+                _bt_consec += 1
+            else:
+                break
+
+        if (rsi_prev < rsi_long_th and rsi_cur > rsi_prev and mfi_cur < 40
+                and macd_up and _bt_obv_ok and _bt_consec < 3):
             stats["抄底"]["total"] += 1
             stats["抄底"]["vol_sum"] += vol
             if _bt_check_win("抄底", price, ci, is_short_side=False):
                 stats["抄底"]["win"] += 1
 
         # ---- 抄底條件（寬鬆版：MFI < 50，RSI 門檻 +10）----
-        if rsi_prev < (rsi_long_th + 10) and rsi_cur > rsi_prev and mfi_cur < 50 and macd_up:
+        if (rsi_prev < (rsi_long_th + 10) and rsi_cur > rsi_prev and mfi_cur < 50
+                and macd_up and _bt_obv_ok and _bt_consec < 3):
             stats["抄底(寬)"]["total"] += 1
             stats["抄底(寬)"]["vol_sum"] += vol
             if _bt_check_win("抄底(寬)", price, ci, is_short_side=False):
@@ -798,6 +819,28 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
 
     best_strat = max(valid, key=lambda k: valid[k]["score"])
     best = valid[best_strat]
+
+    # === 抄底即時安全檢查 ===
+    # 連跌 ≥3 根 K 線 或 OBV 下降 或 trending_down → 不適合抄底
+    if best_strat == "抄底":
+        blocked = False
+        if consec_down >= 3:
+            blocked = True
+            print(f"  [BLOCK] {symbol}: 抄底被攔截 — 連跌 {consec_down} 根K線，賣壓未竭")
+        elif obv_dir == -1:
+            blocked = True
+            print(f"  [BLOCK] {symbol}: 抄底被攔截 — OBV 下降，量能確認下跌")
+        elif regime == "trending_down":
+            blocked = True
+            print(f"  [BLOCK] {symbol}: 抄底被攔截 — 市場處於下跌趨勢")
+
+        if blocked:
+            # 移除抄底，嘗試用次佳策略
+            valid.pop("抄底", None)
+            if not valid:
+                return None
+            best_strat = max(valid, key=lambda k: valid[k]["score"])
+            best = valid[best_strat]
 
     # 優先使用 ticker 即時價格，K 線收盤價作為備用
     current_price = realtime_price if realtime_price else closes[-1]
