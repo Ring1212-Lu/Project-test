@@ -101,7 +101,7 @@ def get_top_symbols(n=20):
 
 # ===== 回測核心 =====
 
-def run_backtest(symbol, klines, hold_periods=None, rsi_short_thresh=70, rsi_long_thresh=30):
+def run_backtest(symbol, klines, hold_periods=None, rsi_short_thresh=70, rsi_long_thresh=35):
     """
     對單一幣種執行回測。
     hold_periods: 測試不同持倉期（K 線根數）

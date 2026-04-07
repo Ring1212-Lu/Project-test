@@ -532,8 +532,8 @@ class LearningEngine:
         if "optimized_params" not in self.data:
             self.data["optimized_params"] = {
                 "rsi_short_thresh": 70,
-                "rsi_long_thresh": 30,
-                "best_hold_period": 5,
+                "rsi_long_thresh": 35,
+                "best_hold_period": 15,
                 "last_optimized": None,
                 "optimization_count": 0,
                 "history": [],  # 歷次優化記錄
@@ -691,6 +691,6 @@ class LearningEngine:
         """取得目前的最佳參數"""
         return self.data.get("optimized_params", {
             "rsi_short_thresh": 70,
-            "rsi_long_thresh": 30,
-            "best_hold_period": 5,
+            "rsi_long_thresh": 35,
+            "best_hold_period": 15,
         })

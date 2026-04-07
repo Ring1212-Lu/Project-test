@@ -96,10 +96,11 @@ def notify_strong_signals(results, tag="短線"):
     for r in strong[:5]:  # 最多通知 5 個
         sym = r["symbol"].replace("_USDT_PERP", "")
         hold = f"持倉 {r.get('hold_days', '?')} 天" if r.get("strategy_type") == "trend" else ""
+        timing = f"入場:{r.get('entry_timing', '')}" if r.get("entry_timing") else ""
         lines.append(
             f"```\n[{tag}] {sym} | {r['best_strat']} | "
             f"分數:{r['best_score']} 勝率:{r['best_rate']}%\n"
-            f"價格:{r['price']}  TP:{r['tp']}  SL:{r['sl']}  {hold}\n```"
+            f"價格:{r['price']}  TP:{r['tp']}  SL:{r['sl']}  {hold} {timing}\n```"
         )
     send_discord_message("\n".join(lines))
 
@@ -116,7 +117,8 @@ state = {
     "all_results": [],
     "trend_results": [],
     "trend_scan_time": "",
-    "scan_timestamp": 0,          # scan 最後更新時間戳（用於過期檢測）
+    "scan_timestamp": 0,          # 短線 scan 最後更新時間戳（用於過期檢測）
+    "trend_scan_timestamp": 0,    # 趨勢 scan 最後更新時間戳
     "pool_size": 0,
     "total_perps": 0,
     "gainer_top": None,
@@ -289,6 +291,15 @@ def run_trading_bot(initial_balance=100):
         if is_trend_check:
             with state_lock:
                 trend_results_bot = list(state.get("trend_results", []))
+                trend_scan_ts = state.get("trend_scan_timestamp", 0)
+
+            # 趨勢信號過期檢測（超過 3 倍趨勢掃描週期視為過期）
+            trend_max_age = SCAN_INTERVAL * TREND_EVERY_N * 3
+            trend_age = time.time() - trend_scan_ts if trend_scan_ts > 0 else float('inf')
+            if trend_age > trend_max_age:
+                if trend_scan_ts > 0:
+                    add_trading_log(f"[趨勢] 信號已過期 ({int(trend_age)}s > {trend_max_age}s)，跳過")
+                trend_results_bot = []
 
             # 排除已持倉幣種（防止同一信號重複開倉）
             trend_results_bot = [tr for tr in trend_results_bot if tr["symbol"] not in held_symbols]
@@ -299,7 +310,8 @@ def run_trading_bot(initial_balance=100):
                     sym_short = tr["symbol"].replace("_USDT_PERP", "")
                     add_trading_log(f"[TREND] 評估: {sym_short} {tr['best_strat']} "
                                     f"分數:{tr['best_score']} 勝率:{tr['best_rate']}% "
-                                    f"強度:{tr.get('signal_strength','?')} R:R:{tr.get('rr',0)}")
+                                    f"強度:{tr.get('signal_strength','?')} R:R:{tr.get('rr',0)} "
+                                    f"入場:{tr.get('entry_timing','?')}")
                     cooldown_until = _symbol_cooldown.get(tr["symbol"], 0)
                     if time.time() < cooldown_until:
                         remaining = int(cooldown_until - time.time())
@@ -676,19 +688,17 @@ def run_background_scan():
                             executor.submit(fetch_klines, c["symbol"], "1h", 100): ("1h", c)
                             for c in trend_candidates
                         }
-                        for future in as_completed({**futures_4h, **futures_1h}):
-                            if future in futures_4h:
-                                tf, coin = futures_4h[future]
-                            else:
-                                tf, coin = futures_1h[future]
-                            try:
-                                kdata = future.result()
-                                sym = coin["symbol"]
-                                if sym not in klines_map:
-                                    klines_map[sym] = {"coin": coin, "4h": None, "1h": None}
-                                klines_map[sym][tf] = kdata
-                            except Exception:
-                                pass
+                        all_futures = {**futures_4h, **futures_1h}
+                    # executor 已關閉，所有 futures 完成後再收集（避免併發寫入）
+                    for future, (tf, coin) in {**futures_4h, **futures_1h}.items():
+                        try:
+                            kdata = future.result()
+                            sym = coin["symbol"]
+                            if sym not in klines_map:
+                                klines_map[sym] = {"coin": coin, "4h": None, "1h": None}
+                            klines_map[sym][tf] = kdata
+                        except Exception:
+                            pass
 
                     # Phase 2: 分析（4H 定向 + 1H 入場確認）
                     for sym, data in klines_map.items():
@@ -704,6 +714,7 @@ def run_background_scan():
                     with state_lock:
                         state["trend_results"] = trend_results[:5]
                         state["trend_scan_time"] = datetime.now().strftime("%H:%M:%S")
+                        state["trend_scan_timestamp"] = time.time()
                     add_log(f"[趨勢] 趨勢���描完成，{len(trend_results)} 個訊號，取前 {min(5, len(trend_results))} 個")
 
                     # Discord 通知趨勢強訊號
@@ -856,6 +867,7 @@ def api_state():
                     "sl_pct": r.get("sl_pct", 0),
                     "strategy_type": r.get("strategy_type", "trend"),
                     "hold_days": r.get("hold_days", 3),
+                    "entry_timing": r.get("entry_timing", "4H_ONLY"),
                 })
             except Exception as e:
                 print(f"[API] 序列化趨勢結果出錯: {e}")

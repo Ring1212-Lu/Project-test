@@ -1148,6 +1148,8 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
 
                 # 1H 拒絕入場 → 跳過（4H 方向對但 1H 時機不好）
                 if entry_timing == "1H_REJECT":
+                    print(f"  [趨勢] {symbol}: 4H方向通過但1H入場時機不佳 "
+                          f"(dist_ema20={dist_to_ema20*100:+.1f}%, RSI_1h={rsi_1h_val:.1f}) → 等待回調")
                     return None
 
     # TP/SL: ATR adaptive
