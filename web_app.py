@@ -97,10 +97,11 @@ def notify_strong_signals(results, tag="短線"):
         sym = r["symbol"].replace("_USDT_PERP", "")
         hold = f"持倉 {r.get('hold_days', '?')} 天" if r.get("strategy_type") == "trend" else ""
         timing = f"入場:{r.get('entry_timing', '')}" if r.get("entry_timing") else ""
+        chaodi_info = f"抄底分:{r.get('chaodi_score')}" if r.get("chaodi_score") is not None else ""
         lines.append(
             f"```\n[{tag}] {sym} | {r['best_strat']} | "
             f"分數:{r['best_score']} 勝率:{r['best_rate']}%\n"
-            f"價格:{r['price']}  TP:{r['tp']}  SL:{r['sl']}  {hold} {timing}\n```"
+            f"價格:{r['price']}  TP:{r['tp']}  SL:{r['sl']}  {hold} {timing} {chaodi_info}\n```"
         )
     send_discord_message("\n".join(lines))
 
@@ -437,6 +438,7 @@ def run_trading_bot(initial_balance=100):
                 "quantity": quantity,
                 "score": r["best_score"],
                 "signal_strength": r["signal_strength"],
+                "chaodi_score": r.get("chaodi_score"),
                 "atr": r.get("atr", 0),
                 "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
@@ -829,6 +831,7 @@ def api_state():
                     "obv_bonus": r.get("obv_bonus", 1.0),
                     "recent_bonus": r.get("recent_bonus", 1.0),
                     "signal_strength": r.get("signal_strength", "WEAK"),
+                    "chaodi_score": r.get("chaodi_score"),
                     "detail": r.get("detail", ""),
                     "relaxed_detail": r.get("relaxed_detail", ""),
                     "env_multiplier": r.get("env_multiplier", 1.0),

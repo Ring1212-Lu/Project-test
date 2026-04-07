@@ -635,9 +635,10 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         else:
             return closes[final_idx] > entry_price + fee_cost
 
-    for i in range(6, length - hold_period):
+    max_hold = max(hold_period, chaodi_hold)
+    for i in range(6, length - max_hold):
         ci = i + RSI_OFF
-        if ci + hold_period >= len(closes) or ci < 2:
+        if ci + max_hold >= len(closes) or ci < 2:
             continue
         # MACD 安全索引
         if ci >= len(macd_hist) or ci - 1 < 0:
@@ -914,7 +915,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
                 blocked = True
                 block_reason = f"trending_down + RSI={current_rsi_check:.1f}≥25，超賣不夠深"
         # 布林帶位置檢查：不在 lower- 區域不抄底
-        if not blocked and bb_lower and bb_upper and bb_mid:
+        if not blocked and bb_lower and bb_upper and bb_mid and closes:
             if closes[-1] > bb_mid[-1]:
                 blocked = True
                 block_reason = "價格在布林中軌上方，不是超賣區域"
@@ -927,6 +928,33 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
                 return None
             best_strat = max(valid, key=lambda k: valid[k]["score"])
             best = valid[best_strat]
+
+    # 計算當前 bar 的 chaodi_score（用於前端顯示/通知透明度）
+    rt_chaodi_score = 0
+    if best_strat == "抄底" and len(closes) >= 2 and rsi_vals and mfi_vals:
+        _rt_rsi = rsi_vals[-1] if rsi_vals else 50
+        _rt_mfi = mfi_vals[-1] if mfi_vals else 50
+        if _rt_rsi < 30: rt_chaodi_score += 2
+        elif _rt_rsi < 35: rt_chaodi_score += 1
+        if _rt_mfi < 30: rt_chaodi_score += 2
+        elif _rt_mfi < 40: rt_chaodi_score += 1
+        # OBV exhaustion
+        if (len(obv_vals) >= 4 and
+                obv_vals[-3] > obv_vals[-2] and obv_vals[-1] > obv_vals[-2]):
+            rt_chaodi_score += 2
+        # BB lower touch
+        if bb_lower and bb_lower[-1] > 0 and closes[-1] <= bb_lower[-1] * 1.005:
+            rt_chaodi_score += 2
+        # RSI divergence (use same 20-bar window)
+        if len(closes) >= 21 and len(rsi_vals) >= 21:
+            _lc = closes[-21:]
+            _lr = rsi_vals[-21:]
+            _m = 10
+            if min(_lc[_m:]) < min(_lc[:_m]) and min(_lr[_m:]) > min(_lr[:_m]):
+                rt_chaodi_score += 3
+        # Volume spike
+        if len(volumes) >= 21 and volumes[-1] > mean(volumes[-21:-1]) * 1.5:
+            rt_chaodi_score += 1
 
     # 優先使用 ticker 即時價格，K 線收盤價作為備用
     current_price = realtime_price if realtime_price else closes[-1]
@@ -1031,6 +1059,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         "env_multiplier": best.get("env_multiplier", 1.0),
         "env_detail":     best.get("env_detail", ""),
         "signal_strength": signal_strength,
+        "chaodi_score":   rt_chaodi_score if best_strat == "抄底" else None,
         "detail":         detail,
         "relaxed_detail":  relaxed_detail,
         "kelly_pct":      kelly_pct,
