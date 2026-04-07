@@ -72,7 +72,7 @@ class RiskManager:
         self.max_loss_pct = config.get("max_loss_pct", 10)         # 每日最大虧損 %
         self.max_position_pct = config.get("max_position_pct", 20) # 單次最大倉位 %
         self.max_positions = config.get("max_positions", 2)        # 短線最大同時持倉
-        self.max_trend_positions = config.get("max_trend_positions", 1)  # 趨勢最大同時持倉
+        self.max_trend_positions = config.get("max_trend_positions", 3)  # 趨勢最大同時持倉
         self.max_consecutive_loss = config.get("max_consecutive_loss", 3)
         self.min_signal_strength = config.get("min_signal_strength", "MEDIUM")
         self.min_score = config.get("min_score", 80)
