@@ -54,8 +54,8 @@ MAX_WORKERS = 6        # 並行執行緒數
 MAX_RETRIES = 3        # API 請求重試次數
 
 # ATR 倍數（自適應止盈止損）
-ATR_TP_MULT = {"做空": 2.0, "抄底": 2.5, "追多": 2.5, "做空(寬)": 2.0, "抄底(寬)": 2.5, "趨勢做多": 5.0, "趨勢做空": 4.0}
-ATR_SL_MULT = {"做空": 1.5, "抄底": 1.2, "追多": 1.8, "做空(寬)": 1.5, "抄底(寬)": 1.2, "趨勢做多": 3.5, "趨勢做空": 3.0}
+ATR_TP_MULT = {"做空": 2.0, "抄底": 3.0, "追多": 2.5, "做空(寬)": 2.0, "抄底(寬)": 3.0, "趨勢做多": 5.0, "趨勢做空": 4.0}
+ATR_SL_MULT = {"做空": 1.5, "抄底": 1.0, "追多": 1.8, "做空(寬)": 1.5, "抄底(寬)": 1.0, "趨勢做多": 3.5, "趨勢做空": 3.0}
 
 LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_data.json")
 
@@ -582,42 +582,58 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
 
     # ATR for backtest TP/SL simulation
     atr_for_bt = calc_atr(klines)
+    # 預提取 high/low 用於更精確的回測
+    bt_highs = [float(k.get('high', k.get('close', 0))) for k in klines]
+    bt_lows = [float(k.get('low', k.get('close', 0))) for k in klines]
+    BT_FEE_RATE = 0.001  # 0.1% round-trip fee simulation
+
+    # 抄底專用 hold_period（超賣反彈需要更長醞釀時間）
+    chaodi_hold = 30
 
     def _bt_check_win(strat_name, entry_price, bar_start, is_short_side):
-        """Bar-by-bar TP/SL hit check for short-term backtest"""
+        """Bar-by-bar TP/SL hit check using high/low + fee simulation"""
         tp_mult = ATR_TP_MULT.get(strat_name, 2.0)
         sl_mult = ATR_SL_MULT.get(strat_name, 1.5)
-        # ATR at entry bar (aligned: atr_for_bt[0] corresponds to klines[period])
-        atr_idx = bar_start - 14  # ATR period offset
+        atr_idx = bar_start - 14
         if atr_idx < 0 or atr_idx >= len(atr_for_bt):
-            atr_val = entry_price * 0.02  # fallback
+            atr_val = entry_price * 0.02
         else:
             atr_val = atr_for_bt[atr_idx]
 
-        tp_dist = atr_val * tp_mult
-        sl_dist = atr_val * sl_mult
+        # Fee-adjusted TP/SL distances
+        fee_cost = entry_price * BT_FEE_RATE
+        tp_dist = atr_val * tp_mult - fee_cost
+        sl_dist = atr_val * sl_mult + fee_cost
 
-        for j in range(1, hold_period + 1):
+        # 抄底使用更長的 hold_period
+        hp = chaodi_hold if "抄底" in strat_name else hold_period
+
+        for j in range(1, hp + 1):
             idx = bar_start + j
             if idx >= len(closes):
                 break
-            fp = closes[idx]
+            bar_high = bt_highs[idx] if idx < len(bt_highs) else closes[idx]
+            bar_low = bt_lows[idx] if idx < len(bt_lows) else closes[idx]
+
             if is_short_side:
-                if fp <= entry_price - tp_dist:
-                    return True   # TP hit
-                if fp >= entry_price + sl_dist:
-                    return False  # SL hit
+                # SL first (worst case): high hits SL before low hits TP
+                if bar_high >= entry_price + sl_dist:
+                    return False
+                if bar_low <= entry_price - tp_dist:
+                    return True
             else:
-                if fp >= entry_price + tp_dist:
-                    return True   # TP hit
-                if fp <= entry_price - sl_dist:
-                    return False  # SL hit
-        # Neither hit: check final price direction
-        final_idx = min(bar_start + hold_period, len(closes) - 1)
+                # SL first (worst case): low hits SL before high hits TP
+                if bar_low <= entry_price - sl_dist:
+                    return False
+                if bar_high >= entry_price + tp_dist:
+                    return True
+
+        # Neither hit: check final price (minus fees)
+        final_idx = min(bar_start + hp, len(closes) - 1)
         if is_short_side:
-            return closes[final_idx] < entry_price
+            return closes[final_idx] < entry_price - fee_cost
         else:
-            return closes[final_idx] > entry_price
+            return closes[final_idx] > entry_price + fee_cost
 
     for i in range(6, length - hold_period):
         ci = i + RSI_OFF
@@ -654,11 +670,58 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             if _bt_check_win("做空(寬)", price, ci, is_short_side=True):
                 stats["做空(寬)"]["win"] += 1
 
-        # ---- 抄底條件（嚴格版，RSI<35, MFI<40）----
-        # 回測用局部 OBV 方向（前 3 根）
-        _bt_obv_ok = (ci >= 3 and ci < len(obv_vals) and
-                      obv_vals[ci] >= obv_vals[ci - 3])
-        # 回測用局部連跌保護（連跌 ≥3 根不抄底）
+        # ---- 抄底 v2：多信號評分制 ----
+        chaodi_score = 0
+
+        # (1) RSI 極度超賣：<30 = +2, <35 = +1
+        if rsi_cur < 30:
+            chaodi_score += 2
+        elif rsi_cur < 35:
+            chaodi_score += 1
+
+        # (2) MFI 資金流枯竭：<30 = +2, <40 = +1
+        if mfi_cur < 30:
+            chaodi_score += 2
+        elif mfi_cur < 40:
+            chaodi_score += 1
+
+        # (3) OBV 量能枯竭後回升（先跌後回升 = 賣壓耗盡）
+        _bt_obv_exhaustion = (ci >= 4 and ci < len(obv_vals) and
+                              obv_vals[ci - 3] > obv_vals[ci - 1] and  # 之前在跌
+                              obv_vals[ci] > obv_vals[ci - 1])          # 現在回升
+        if _bt_obv_exhaustion:
+            chaodi_score += 2
+
+        # (4) 布林下軌觸及或突破
+        _bb_idx = ci - (len(closes) - len(bb_lower)) if bb_lower else -1
+        _bb_touch = (_bb_idx >= 0 and _bb_idx < len(bb_lower) and
+                     bb_lower[_bb_idx] > 0 and
+                     closes[ci] <= bb_lower[_bb_idx] * 1.005)
+        if _bb_touch:
+            chaodi_score += 2
+
+        # (5) RSI 看漲背離（價格新低但 RSI 沒有）
+        if ci >= 20:
+            _local_closes = closes[ci - 20:ci + 1]
+            _local_rsi_offset = ci - (len(closes) - len(rsi_vals))
+            if _local_rsi_offset >= 20:
+                _local_rsi = rsi_vals[_local_rsi_offset - 20:_local_rsi_offset + 1]
+                if len(_local_closes) >= 20 and len(_local_rsi) >= 20:
+                    _mid = 10
+                    if (min(_local_closes[_mid:]) < min(_local_closes[:_mid]) and
+                            min(_local_rsi[_mid:]) > min(_local_rsi[:_mid])):
+                        chaodi_score += 3  # 看漲背離 = 強烈底部信號
+
+        # (6) 放量（當前量 > 20根平均量 × 1.5）
+        _avg_vol = mean(volumes[max(0, ci - 20):ci]) if ci >= 20 else vol
+        if _avg_vol > 0 and vol > _avg_vol * 1.5:
+            chaodi_score += 1
+
+        # (7) Pump-dump 過濾：20根內最高價/當前價 < 1.5
+        _peak_20 = max(closes[max(0, ci - 20):ci + 1])
+        _not_post_pump = (_peak_20 / price) < 1.5 if price > 0 else True
+
+        # (8) 連跌保護（≥4 根不抄底）
         _bt_consec = 0
         for _j in range(ci, max(ci - 5, 0), -1):
             if _j > 0 and closes[_j] < closes[_j - 1]:
@@ -666,16 +729,17 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             else:
                 break
 
-        if (rsi_prev < rsi_long_th and rsi_cur > rsi_prev and mfi_cur < 40
-                and macd_up and _bt_obv_ok and _bt_consec < 3):
+        # 嚴格版：需 ≥ 6 分 + RSI 反彈 + MACD 向上 + 非 pump-dump + 連跌<4
+        if (chaodi_score >= 6 and rsi_cur > rsi_prev and macd_up
+                and _not_post_pump and _bt_consec < 4):
             stats["抄底"]["total"] += 1
             stats["抄底"]["vol_sum"] += vol
             if _bt_check_win("抄底", price, ci, is_short_side=False):
                 stats["抄底"]["win"] += 1
 
-        # ---- 抄底條件（寬鬆版：MFI < 50，RSI 門檻 +10）----
-        if (rsi_prev < (rsi_long_th + 10) and rsi_cur > rsi_prev and mfi_cur < 50
-                and macd_up and _bt_obv_ok and _bt_consec < 3):
+        # 寬鬆版：需 ≥ 4 分
+        if (chaodi_score >= 4 and rsi_cur > rsi_prev and macd_up
+                and _not_post_pump and _bt_consec < 4):
             stats["抄底(寬)"]["total"] += 1
             stats["抄底(寬)"]["vol_sum"] += vol
             if _bt_check_win("抄底(寬)", price, ci, is_short_side=False):
@@ -830,23 +894,33 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         best_strat = max(valid, key=lambda k: valid[k]["score"])
         best = valid[best_strat]
 
-    # 抄底專用攔截（僅允許 trending_up 和 volatile）
+    # 抄底 v2 即時安全檢查（多層防護）
     if best_strat == "抄底":
         blocked = False
-        if regime not in ("trending_up", "volatile"):
+        block_reason = ""
+
+        # Pump-dump 過濾：24h 漲幅 > 30% 的幣不抄底
+        if change24h > 30:
             blocked = True
-            print(f"  [BLOCK] {symbol}: 抄底被攔截 — regime={regime}，僅允許 trending_up/volatile")
-        elif change24h > 50:
+            block_reason = f"24h漲幅{change24h:+.1f}%，暴漲回落非超賣"
+        # 連跌 ≥4 根：賣壓未竭
+        elif consec_down >= 4:
             blocked = True
-            print(f"  [BLOCK] {symbol}: 抄底被攔截 — 24h漲幅{change24h:+.1f}%，暴漲回落非超賣")
-        elif consec_down >= 3:
-            blocked = True
-            print(f"  [BLOCK] {symbol}: 抄底被攔截 — 連跌 {consec_down} 根K線，賣壓未竭")
-        elif obv_dir == -1:
-            blocked = True
-            print(f"  [BLOCK] {symbol}: 抄底被攔截 — OBV 下降，量能確認下跌")
+            block_reason = f"連跌 {consec_down} 根K線，賣壓未竭"
+        # trending_down 時需 RSI < 25 才允許（極度超賣才可）
+        elif regime == "trending_down":
+            current_rsi_check = rsi_vals[-1] if rsi_vals else 50
+            if current_rsi_check >= 25:
+                blocked = True
+                block_reason = f"trending_down + RSI={current_rsi_check:.1f}≥25，超賣不夠深"
+        # 布林帶位置檢查：不在 lower- 區域不抄底
+        if not blocked and bb_lower and bb_upper and bb_mid:
+            if closes[-1] > bb_mid[-1]:
+                blocked = True
+                block_reason = "價格在布林中軌上方，不是超賣區域"
 
         if blocked:
+            print(f"  [BLOCK] {symbol}: 抄底被攔截 — {block_reason}")
             # 移除抄底，嘗試用次佳策略
             valid.pop("抄底", None)
             if not valid:
