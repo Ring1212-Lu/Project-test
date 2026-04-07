@@ -1229,8 +1229,8 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
             if not (current_ema20 < current_ema50 and current_price < current_ema20
                     and 30 <= current_rsi <= 50):
                 continue
-            # 趨勢做空需要 BTC 大盤向下確認
-            if btc_trend != -1:
+            # 趨勢做空需要 BTC 大盤非上漲（下跌或中性皆可）
+            if btc_trend == 1:
                 continue
 
         weight = learner.get_weight(symbol, strat)
@@ -1304,11 +1304,11 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
                     else:
                         entry_timing = "1H_REJECT"    # 不適合入場
 
-                # 1H 拒絕入場 → 跳過（4H 方向對但 1H 時機不好）
+                # 1H 拒絕入場 → 降級為 WAIT（仍顯示訊號，但標記不適合立即入場）
                 if entry_timing == "1H_REJECT":
+                    entry_timing = "1H_WAIT"
                     print(f"  [趨勢] {symbol}: 4H方向通過但1H入場時機不佳 "
-                          f"(dist_ema20={dist_to_ema20*100:+.1f}%, RSI_1h={rsi_1h_val:.1f}) → 等待回調")
-                    return None
+                          f"(dist_ema20={dist_to_ema20*100:+.1f}%, RSI_1h={rsi_1h_val:.1f}) → 顯示但標記等待")
 
     # TP/SL: ATR adaptive
     tp_dist = current_atr * ATR_TP_MULT[best_strat]

@@ -313,6 +313,10 @@ def run_trading_bot(initial_balance=100):
                                     f"分數:{tr['best_score']} 勝率:{tr['best_rate']}% "
                                     f"強度:{tr.get('signal_strength','?')} R:R:{tr.get('rr',0)} "
                                     f"入場:{tr.get('entry_timing','?')}")
+                    # 1H_WAIT: 顯示在前端但不自動開倉
+                    if tr.get("entry_timing") == "1H_WAIT":
+                        add_trading_log(f"[TREND] {sym_short}: WAIT (4H方向OK但1H時機未到，僅顯示)")
+                        continue
                     cooldown_until = _symbol_cooldown.get(tr["symbol"], 0)
                     if time.time() < cooldown_until:
                         remaining = int(cooldown_until - time.time())
@@ -591,7 +595,7 @@ def run_background_scan():
             if is_4h_candle_close:
                 run_background_scan._last_4h_slot = current_4h_slot
                 add_log(f"[趨勢] 4H K 線閉合觸發（UTC {utc_now.strftime('%H:%M')}）")
-            is_trend_round = (round_num % TREND_EVERY_N == 0) or is_4h_candle_close
+            is_trend_round = (round_num == 1 or round_num % TREND_EVERY_N == 0) or is_4h_candle_close
 
             # ── 短線���描（1M K線，每輪都跑）──
             add_log(f"[短線] 並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒��...")
