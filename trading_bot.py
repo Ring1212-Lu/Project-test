@@ -53,10 +53,8 @@ MAX_POSITION_AGE = 7200  # 2 hours in seconds
 
 # Trend strategy constants
 MAX_TREND_POSITION_AGE = 7 * 24 * 3600  # 7 days
-TREND_TP_PCT = 0.10  # +10%
-TREND_SL_PCT = 0.08  # -8%
-TREND_TRAILING_TRIGGER = 0.03  # Trigger trailing stop after 3% profit
-TREND_TRAILING_STEP = 0.02    # Move SL up by 2% of entry when triggered
+TREND_TRAILING_TRIGGER = 0.05  # Trigger trailing stop after 5% profit
+TREND_TRAILING_STEP = 0.03    # Drawback 3% from peak when trailing
 
 # ===== 安全設定 =====
 class RiskManager:
@@ -121,19 +119,16 @@ class RiskManager:
         return self.min_score  # 正常門檻
 
     def calc_position_size(self, signal):
-        """計算開倉大小（基於信號強度動態調整）"""
+        """計算開倉大小（固定比例，依信號強度調整）"""
         strength = signal.get("signal_strength", "WEAK")
-        # STRONG: 用 max_position_pct(20%), MEDIUM: 用一半(10%)
+        # STRONG: 15%, MEDIUM: 10% — 固定比例取代 Kelly 公式
         if strength == "STRONG":
-            base_pct = self.max_position_pct
+            pct = 15
         else:
-            base_pct = self.max_position_pct / 2
-
-        kelly = signal.get("kelly_pct", 10)
-        max_pct = min(kelly, base_pct)
-        max_pct = max(max_pct, 5)  # 最低 5%
-        size_usd = self.current_balance * (max_pct / 100)
-        return round(size_usd, 2), max_pct
+            pct = 10
+        pct = min(pct, self.max_position_pct)
+        size_usd = self.current_balance * (pct / 100)
+        return round(size_usd, 2), pct
 
     def try_open_position(self, signal, position):
         """原子化開倉：檢查 + 記錄在同一個鎖內，避免 TOCTOU 競態"""

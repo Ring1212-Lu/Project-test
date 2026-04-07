@@ -47,15 +47,15 @@ BASE_URL   = "https://fapi.binance.com/fapi/v1/klines"
 TICK_URL   = "https://fapi.binance.com/fapi/v1/ticker/24hr"
 INTERVAL   = 60        # 秒，standalone 模式用。web_app 改用 SCAN_INTERVAL=45
 TOP_N      = 3         # 最終回報前幾名
-MIN_SIG    = 2         # 最低訊號次數門檻（降低讓高勝率的做空/抄底不被淘汰）
+MIN_SIG    = 5         # 最低訊號次數門檻（提高以確保統計顯著性）
 TOP15_PCT  = 0.15      # 每側（漲/跌）取百分比
 TOP15_MAX  = 12        # 每側最多取幾個
 MAX_WORKERS = 6        # 並行執行緒數
 MAX_RETRIES = 3        # API 請求重試次數
 
 # ATR 倍數（自適應止盈止損）
-ATR_TP_MULT = {"做空": 1.5, "抄底": 2.0, "追多": 2.0, "做空(寬)": 1.5, "抄底(寬)": 2.0, "趨勢做多": 5.0, "趨勢做空": 5.0}
-ATR_SL_MULT = {"做空": 1.8, "抄底": 2.0, "追多": 2.0, "做空(寬)": 1.8, "抄底(寬)": 2.0, "趨勢做多": 4.0, "趨勢做空": 4.0}
+ATR_TP_MULT = {"做空": 2.0, "抄底": 2.5, "追多": 2.5, "做空(寬)": 2.0, "抄底(寬)": 2.5, "趨勢做多": 5.0, "趨勢做空": 4.0}
+ATR_SL_MULT = {"做空": 1.5, "抄底": 1.8, "追多": 1.8, "做空(寬)": 1.5, "抄底(寬)": 1.8, "趨勢做多": 3.5, "趨勢做空": 3.0}
 
 LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_data.json")
 
@@ -408,7 +408,7 @@ def _throttled_get(url, **kwargs):
     return r
 
 
-def fetch_klines(symbol, interval="1M", limit=120):
+def fetch_klines(symbol, interval="1M", limit=500):
     """從幣安合約 API 抓取 K 線，轉換成相容格式"""
     # 轉換符號格式
     binance_sym = _pionex_to_binance_symbol(symbol)
@@ -556,12 +556,12 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
 
     # 使用優化參數（如果有的話）
     rsi_short_th = 70
-    rsi_long_th = 30
-    hold_period = 5
+    rsi_long_th = 35
+    hold_period = 15
     if opt_params:
         rsi_short_th = opt_params.get("rsi_short_thresh", 70)
-        rsi_long_th = opt_params.get("rsi_long_thresh", 30)
-        hold_period = opt_params.get("best_hold_period", 5)
+        rsi_long_th = opt_params.get("rsi_long_thresh", 35)
+        hold_period = opt_params.get("best_hold_period", 15)
 
     # 統計計數
     stats = {
@@ -572,6 +572,45 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         "抄底(寬)": {"win": 0, "total": 0, "vol_sum": 0},
     }
 
+    # ATR for backtest TP/SL simulation
+    atr_for_bt = calc_atr(klines)
+
+    def _bt_check_win(strat_name, entry_price, bar_start, is_short_side):
+        """Bar-by-bar TP/SL hit check for short-term backtest"""
+        tp_mult = ATR_TP_MULT.get(strat_name, 2.0)
+        sl_mult = ATR_SL_MULT.get(strat_name, 1.5)
+        # ATR at entry bar (aligned: atr_for_bt[0] corresponds to klines[period])
+        atr_idx = bar_start - 14  # ATR period offset
+        if atr_idx < 0 or atr_idx >= len(atr_for_bt):
+            atr_val = entry_price * 0.02  # fallback
+        else:
+            atr_val = atr_for_bt[atr_idx]
+
+        tp_dist = atr_val * tp_mult
+        sl_dist = atr_val * sl_mult
+
+        for j in range(1, hold_period + 1):
+            idx = bar_start + j
+            if idx >= len(closes):
+                break
+            fp = closes[idx]
+            if is_short_side:
+                if fp <= entry_price - tp_dist:
+                    return True   # TP hit
+                if fp >= entry_price + sl_dist:
+                    return False  # SL hit
+            else:
+                if fp >= entry_price + tp_dist:
+                    return True   # TP hit
+                if fp <= entry_price - sl_dist:
+                    return False  # SL hit
+        # Neither hit: check final price direction
+        final_idx = min(bar_start + hold_period, len(closes) - 1)
+        if is_short_side:
+            return closes[final_idx] < entry_price
+        else:
+            return closes[final_idx] > entry_price
+
     for i in range(6, length - hold_period):
         ci = i + RSI_OFF
         if ci + hold_period >= len(closes) or ci < 2:
@@ -581,7 +620,6 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             continue
 
         price      = closes[ci]
-        next_price = closes[ci + hold_period]
         rsi_prev   = rsi_vals[i - 1] if i - 1 >= 0 else 50
         rsi_cur    = rsi_vals[i]
         mfi_cur    = mfi_vals[i] if i < len(mfi_vals) else 50
@@ -594,43 +632,44 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         except IndexError:
             vol = 1.0
 
-        # ---- 做空條件（嚴格版，使用優化閾值）----
-        if rsi_prev > rsi_short_th and rsi_cur < rsi_prev and macd_down:
+        # ---- 做空條件（嚴格版，使用優化閾值 + MFI>60 過濾）----
+        if rsi_prev > rsi_short_th and rsi_cur < rsi_prev and macd_down and mfi_cur > 60:
             stats["做空"]["total"] += 1
             stats["做空"]["vol_sum"] += vol
-            if next_price < price:
+            if _bt_check_win("做空", price, ci, is_short_side=True):
                 stats["做空"]["win"] += 1
 
-        # ---- 做空條件（寬鬆版：RSI 門檻 -10，去掉 rsi>30 限制）----
-        if rsi_prev > (rsi_short_th - 10) and rsi_cur < rsi_prev and macd_down:
+        # ---- 做空條件（寬鬆版：RSI 門檻 -10）----
+        if rsi_prev > (rsi_short_th - 10) and rsi_cur < rsi_prev and macd_down and mfi_cur > 60:
             stats["做空(寬)"]["total"] += 1
             stats["做空(寬)"]["vol_sum"] += vol
-            if next_price < price:
+            if _bt_check_win("做空(寬)", price, ci, is_short_side=True):
                 stats["做空(寬)"]["win"] += 1
 
-        # ---- 抄底條件（嚴格版，使用優化閾值）----
-        if rsi_prev < rsi_long_th and rsi_cur > rsi_prev and mfi_cur < 35 and macd_up:
+        # ---- 抄底條件（嚴格版，RSI<35, MFI<40）----
+        if rsi_prev < rsi_long_th and rsi_cur > rsi_prev and mfi_cur < 40 and macd_up:
             stats["抄底"]["total"] += 1
             stats["抄底"]["vol_sum"] += vol
-            if next_price > price:
+            if _bt_check_win("抄底", price, ci, is_short_side=False):
                 stats["抄底"]["win"] += 1
 
-        # ---- 抄底條件（寬鬆版：MFI < 45，RSI 門檻 +10）----
-        if rsi_prev < (rsi_long_th + 10) and rsi_cur > rsi_prev and mfi_cur < 45 and macd_up:
+        # ---- 抄底條件（寬鬆版：MFI < 50，RSI 門檻 +10）----
+        if rsi_prev < (rsi_long_th + 10) and rsi_cur > rsi_prev and mfi_cur < 50 and macd_up:
             stats["抄底(寬)"]["total"] += 1
             stats["抄底(寬)"]["vol_sum"] += vol
-            if next_price > price:
+            if _bt_check_win("抄底(寬)", price, ci, is_short_side=False):
                 stats["抄底(寬)"]["win"] += 1
 
-        # ---- 追多條件（加嚴：需 OBV 上升確認量能）----
-        obv_rising = (ci >= 5 and ci < len(obv_vals) and
-                      obv_vals[ci] > obv_vals[ci - 5])
-        if (closes[ci] > closes[ci - 1] > closes[ci - 2]
+        # ---- 追多條件（放寬：連漲2根、去MFI>30、OBV lookback 3）----
+        obv_rising = (ci >= 3 and ci < len(obv_vals) and
+                      obv_vals[ci] > obv_vals[ci - 3])
+        if (closes[ci] > closes[ci - 1]
+                and ci >= 2 and closes[ci - 1] > closes[ci - 2]
                 and 60 < rsi_cur < 80 and macd_up
-                and mfi_cur > 30 and obv_rising):
+                and obv_rising):
             stats["追多"]["total"] += 1
             stats["追多"]["vol_sum"] += vol
-            if next_price > price:
+            if _bt_check_win("追多", price, ci, is_short_side=False):
                 stats["追多"]["win"] += 1
 
     # 計算勝率與綜合分數
@@ -648,8 +687,8 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         weight = learner.get_weight(symbol, base_strat)
         regime_bonus = learner.get_regime_bonus(regime, base_strat)
 
-        # 信心係數：樣本越多越高
-        confidence = min(s["total"] / 10.0, 1.5) if s["total"] >= MIN_SIG else 0
+        # 信心係數：對數曲線，避免少量樣本膨脹（5→0.70, 10→1.0, 20→1.30, 50→1.5 cap）
+        confidence = min(math.log(s["total"] / 10.0 + 1) * 1.45, 1.5) if s["total"] >= MIN_SIG else 0
 
         # OBV 確認加成
         obv_bonus = 1.0
@@ -674,15 +713,15 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         # === 環境因子（用加法混合，避免連乘壓縮） ===
         env_adjustment = 0.0
 
-        # BTC 大盤
+        # BTC 大盤（加強順逆盤影響）
         if is_long and btc_trend == -1:
             env_adjustment -= 0.15   # 逆大盤做多
         elif is_short and btc_trend == 1:
             env_adjustment -= 0.12   # 逆大盤做空
         elif is_long and btc_trend == 1:
-            env_adjustment += 0.10   # 順大盤做多
+            env_adjustment += 0.15   # 順大盤做多
         elif is_short and btc_trend == -1:
-            env_adjustment += 0.10   # 順大盤做空
+            env_adjustment += 0.15   # 順大盤做空
 
         # 多時間框架確認
         if is_long and htf_trend == 1:
@@ -694,11 +733,11 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         elif is_short and htf_trend == 1:
             env_adjustment -= 0.10
 
-        # RSI 背離（強信號，給較大加成）
+        # RSI 背離（適度加成，避免過度依賴）
         if divergence == 1 and base_strat == "抄底":
-            env_adjustment += 0.20   # 看漲背離 + 抄底
+            env_adjustment += 0.12   # 看漲背離 + 抄底
         elif divergence == -1 and is_short:
-            env_adjustment += 0.20   # 看跌背離 + 做空
+            env_adjustment += 0.12   # 看跌背離 + 做空
         elif divergence == 1 and is_short:
             env_adjustment -= 0.12   # 看漲背離做空
         elif divergence == -1 and is_long:
@@ -730,10 +769,13 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             elif global_wr > 70:
                 global_penalty = 1.2   # 勝率 > 70%：獎勵
 
-        # 綜合分數 = 基礎分(勝率×信心×學習權重) × 核心過濾(regime×obv×recent) × 環境因子 × 全局修正
+        # 勝率地板懲罰：勝率 < 50% 的策略大幅降權
+        winrate_floor = 0.5 if r < 50 else 1.0
+
+        # 綜合分數 = 基礎分(勝率×信心×學習權重) × 核心過濾(regime×obv×recent) × 環境因子 × 全局修正 × 勝率地板
         base_score = r * confidence * weight
         core_filter = regime_bonus * obv_bonus * recent_bonus
-        score = base_score * core_filter * env_multiplier * global_penalty
+        score = base_score * core_filter * env_multiplier * global_penalty * winrate_floor
 
         strat_results[strat] = {
             "rate": r, "total": s["total"], "win": s["win"],
@@ -965,31 +1007,40 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0):
             continue
         rsi_i = rsi_vals[rsi_idx]
 
-        # 趨勢做多（含持倉期間 TP/SL 檢查）
+        # ATR at this bar for adaptive TP/SL
+        atr_offset = len(closes) - len(atr_vals)
+        atr_idx = i - atr_offset
+        atr_i = atr_vals[atr_idx] if 0 <= atr_idx < len(atr_vals) else price_i * 0.02
+
+        # 趨勢做多（含持倉期間 ATR 自適應 TP/SL 檢查）
         if e20 > e50 and price_i > e20 and 45 <= rsi_i <= 75:
             stats["趨勢做多"]["total"] += 1
+            tp_dist = atr_i * ATR_TP_MULT["趨勢做多"]
+            sl_dist = atr_i * ATR_SL_MULT["趨勢做多"]
             tp_hit, sl_hit = False, False
             for j in range(1, hold_period + 1):
                 fp = closes[i + j]
-                if fp >= price_i * 1.10:
+                if fp >= price_i + tp_dist:
                     tp_hit = True
                     break
-                if fp <= price_i * 0.92:
+                if fp <= price_i - sl_dist:
                     sl_hit = True
                     break
             if tp_hit or (not sl_hit and future_price > price_i):
                 stats["趨勢做多"]["win"] += 1
 
-        # 趨勢做空（含持倉期間 TP/SL 檢查）
-        if e20 < e50 and price_i < e20 and 25 <= rsi_i <= 55:
+        # 趨勢做空（含持倉期間 ATR 自適應 TP/SL 檢查，RSI 30-50）
+        if e20 < e50 and price_i < e20 and 30 <= rsi_i <= 50:
             stats["趨勢做空"]["total"] += 1
+            tp_dist = atr_i * ATR_TP_MULT["趨勢做空"]
+            sl_dist = atr_i * ATR_SL_MULT["趨勢做空"]
             tp_hit, sl_hit = False, False
             for j in range(1, hold_period + 1):
                 fp = closes[i + j]
-                if fp <= price_i * 0.90:
+                if fp <= price_i - tp_dist:
                     tp_hit = True
                     break
-                if fp >= price_i * 1.08:
+                if fp >= price_i + sl_dist:
                     sl_hit = True
                     break
             if tp_hit or (not sl_hit and future_price < price_i):
@@ -1018,7 +1069,10 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0):
                 continue
         else:
             if not (current_ema20 < current_ema50 and current_price < current_ema20
-                    and 25 <= current_rsi <= 55):
+                    and 30 <= current_rsi <= 50):
+                continue
+            # 趨勢做空需要 BTC 大盤向下確認
+            if btc_trend != -1:
                 continue
 
         weight = learner.get_weight(symbol, strat)
@@ -1056,17 +1110,20 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0):
     if not best_strat:
         return None
 
-    # TP/SL: percentage-based
-    if best_strat == "趨勢做多":
-        tp_price = round(current_price * 1.10, 6)   # +10%
-        sl_price = round(current_price * 0.92, 6)   # -8%
-    else:  # 趨勢做空
-        tp_price = round(current_price * 0.90, 6)   # price down 10%
-        sl_price = round(current_price * 1.08, 6)   # price up 8%
+    # TP/SL: ATR adaptive
+    tp_dist = current_atr * ATR_TP_MULT[best_strat]
+    sl_dist = current_atr * ATR_SL_MULT[best_strat]
 
-    tp_pct = 10.0
-    sl_pct = 8.0
-    rr = round(tp_pct / sl_pct, 2) if sl_pct > 0 else 0
+    if best_strat == "趨勢做多":
+        tp_price = round(current_price + tp_dist, 6)
+        sl_price = round(current_price - sl_dist, 6)
+    else:  # 趨勢做空
+        tp_price = round(current_price - tp_dist, 6)
+        sl_price = round(current_price + sl_dist, 6)
+
+    tp_pct = round(tp_dist / current_price * 100, 2)
+    sl_pct = round(sl_dist / current_price * 100, 2)
+    rr = round(tp_dist / sl_dist, 2) if sl_dist > 0 else 0
 
     # Signal strength
     if best_score >= 120:

@@ -667,7 +667,7 @@ def run_background_scan():
                     trend_results = []
                     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                         futures = {
-                            executor.submit(fetch_klines, c["symbol"], "4h", 120): c
+                            executor.submit(fetch_klines, c["symbol"], "4h", 300): c
                             for c in trend_candidates
                         }
                         for future in as_completed(futures):
