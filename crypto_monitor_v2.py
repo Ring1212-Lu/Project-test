@@ -223,7 +223,7 @@ def calc_obv(closes, volumes):
     return obv
 
 
-def obv_trend(obv_vals, lookback=10):
+def obv_trend(obv_vals, lookback=30):
     """判斷 OBV 趨勢方向：1=上升, -1=下降, 0=持平"""
     if len(obv_vals) < lookback:
         return 0
@@ -820,11 +820,23 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
     best_strat = max(valid, key=lambda k: valid[k]["score"])
     best = valid[best_strat]
 
-    # === 抄底即時安全檢查 ===
-    # 連跌 ≥3 根 K 線 或 OBV 下降 或 trending_down → 不適合抄底
+    # === 做多策略即時安全檢查 ===
+    # 下跌趨勢中所有做多策略（抄底、追多）都應被攔截
+    if best_strat == "追多" and regime == "trending_down":
+        print(f"  [BLOCK] {symbol}: 追多被攔截 — 市場處於下跌趨勢，不適合做多")
+        valid.pop("追多", None)
+        if not valid:
+            return None
+        best_strat = max(valid, key=lambda k: valid[k]["score"])
+        best = valid[best_strat]
+
+    # 抄底專用攔截（更嚴格：連跌/OBV/趨勢/暴漲回落）
     if best_strat == "抄底":
         blocked = False
-        if consec_down >= 3:
+        if change24h > 50:
+            blocked = True
+            print(f"  [BLOCK] {symbol}: 抄底被攔截 — 24h漲幅{change24h:+.1f}%，暴漲回落非超賣")
+        elif consec_down >= 3:
             blocked = True
             print(f"  [BLOCK] {symbol}: 抄底被攔截 — 連跌 {consec_down} 根K線，賣壓未竭")
         elif obv_dir == -1:
