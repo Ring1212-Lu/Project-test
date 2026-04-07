@@ -89,7 +89,7 @@ class LearningEngine:
     REGIME_BONUS = {
         MarketRegime.TRENDING_UP:   {"做空": 1.1, "抄底": 0.9, "追多": 0.7},   # 做空78%↑, 追多28%↓
         MarketRegime.TRENDING_DOWN: {"做空": 1.4, "抄底": 0.5, "追多": 0.5},   # 下跌趨勢：做空加成，抄底/追多大幅懲罰
-        MarketRegime.RANGING:       {"做空": 1.1, "抄底": 1.2, "追多": 0.7},   # 做空80%, 追多38%
+        MarketRegime.RANGING:       {"做空": 1.1, "抄底": 0.6, "追多": 0.7},   # 做空80%, 抄底45.7%實證不佳
         MarketRegime.VOLATILE:      {"做空": 1.0, "抄底": 0.8, "追多": 0.6},   # 做空74%, 追多29%
     }
 

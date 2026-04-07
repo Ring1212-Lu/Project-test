@@ -55,7 +55,7 @@ MAX_RETRIES = 3        # API 請求重試次數
 
 # ATR 倍數（自適應止盈止損）
 ATR_TP_MULT = {"做空": 2.0, "抄底": 2.5, "追多": 2.5, "做空(寬)": 2.0, "抄底(寬)": 2.5, "趨勢做多": 5.0, "趨勢做空": 4.0}
-ATR_SL_MULT = {"做空": 1.5, "抄底": 1.8, "追多": 1.8, "做空(寬)": 1.5, "抄底(寬)": 1.8, "趨勢做多": 3.5, "趨勢做空": 3.0}
+ATR_SL_MULT = {"做空": 1.5, "抄底": 1.2, "追多": 1.8, "做空(寬)": 1.5, "抄底(寬)": 1.2, "趨勢做多": 3.5, "趨勢做空": 3.0}
 
 LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_data.json")
 
@@ -830,10 +830,13 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         best_strat = max(valid, key=lambda k: valid[k]["score"])
         best = valid[best_strat]
 
-    # 抄底專用攔截（更嚴格：連跌/OBV/趨勢/暴漲回落）
+    # 抄底專用攔截（僅允許 trending_up 和 volatile）
     if best_strat == "抄底":
         blocked = False
-        if change24h > 50:
+        if regime not in ("trending_up", "volatile"):
+            blocked = True
+            print(f"  [BLOCK] {symbol}: 抄底被攔截 — regime={regime}，僅允許 trending_up/volatile")
+        elif change24h > 50:
             blocked = True
             print(f"  [BLOCK] {symbol}: 抄底被攔截 — 24h漲幅{change24h:+.1f}%，暴漲回落非超賣")
         elif consec_down >= 3:
@@ -842,9 +845,6 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         elif obv_dir == -1:
             blocked = True
             print(f"  [BLOCK] {symbol}: 抄底被攔截 — OBV 下降，量能確認下跌")
-        elif regime == "trending_down":
-            blocked = True
-            print(f"  [BLOCK] {symbol}: 抄底被攔截 — 市場處於下跌趨勢")
 
         if blocked:
             # 移除抄底，嘗試用次佳策略

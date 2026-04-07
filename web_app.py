@@ -35,7 +35,7 @@ BOT_CHECK_INTERVAL = 30  # 交易 bot 讀取信號的間隔（秒）
 
 # Same-coin cooldown after stop-loss
 _symbol_cooldown = {}  # {symbol: timestamp_of_last_stoploss}
-COOLDOWN_SECONDS = 3600  # 60 minutes
+COOLDOWN_SECONDS = 7200  # 2 hours（虧損後同幣冷卻）
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LEARNING_FILE = os.path.join(BASE_DIR, "learning_data.json")
