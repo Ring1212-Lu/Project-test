@@ -940,9 +940,9 @@ def fetch_trend_candidates(tickers, min_volume=10_000_000):
     return candidates[:20]  # Top 20 by volume
 
 
-def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0):
+def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=None):
     """
-    趨勢策略分析（4H K線）
+    趨勢策略分析（4H 定向 + 1H 入場確認）
     策略：趨勢做多 / 趨勢做空
     持倉期：3-7天（18根4H K線 ≈ 3天）
     """
@@ -1110,6 +1110,46 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0):
     if not best_strat:
         return None
 
+    # ── 1H 入場時機確認（4H 定向通過後，用 1H 精確入場）──
+    entry_timing = "4H_ONLY"
+    if klines_1h and len(klines_1h) >= 30:
+        closes_1h = [float(k['close']) for k in klines_1h if float(k.get('close', 0)) > 0]
+        if len(closes_1h) >= 30:
+            ema20_1h = calc_ema(closes_1h, 20)
+            rsi_1h = calc_rsi_wilder(closes_1h, 14)
+
+            if ema20_1h and rsi_1h:
+                price_1h = closes_1h[-1]
+                ema20_1h_val = ema20_1h[-1]
+                rsi_1h_val = rsi_1h[-1]
+                # 價格與 1H EMA20 的距離（百分比）
+                dist_to_ema20 = (price_1h - ema20_1h_val) / ema20_1h_val
+
+                is_long = (best_strat == "趨勢做多")
+
+                if is_long:
+                    # 做多入場：價格在 1H EMA20 附近（回調入場）或剛突破
+                    # 距離 EMA20 在 -1% ~ +2% 範圍 + RSI 40-65（不過熱）
+                    if -0.01 <= dist_to_ema20 <= 0.02 and 40 <= rsi_1h_val <= 65:
+                        entry_timing = "1H_PULLBACK"  # 最佳：回調至均線
+                    elif dist_to_ema20 > 0.02 and rsi_1h_val < 70:
+                        entry_timing = "1H_ABOVE"     # 可接受：在均線上方但未過熱
+                    else:
+                        entry_timing = "1H_REJECT"    # 不適合入場
+                else:
+                    # 做空入場：價格在 1H EMA20 附近（反彈入場）或剛跌破
+                    # 距離 EMA20 在 -2% ~ +1% 範圍 + RSI 35-60（不過冷）
+                    if -0.02 <= dist_to_ema20 <= 0.01 and 35 <= rsi_1h_val <= 60:
+                        entry_timing = "1H_PULLBACK"  # 最佳：反彈至均線
+                    elif dist_to_ema20 < -0.02 and rsi_1h_val > 30:
+                        entry_timing = "1H_BELOW"     # 可接受：在均線下方但未過冷
+                    else:
+                        entry_timing = "1H_REJECT"    # 不適合入場
+
+                # 1H 拒絕入場 → 跳過（4H 方向對但 1H 時機不好）
+                if entry_timing == "1H_REJECT":
+                    return None
+
     # TP/SL: ATR adaptive
     tp_dist = current_atr * ATR_TP_MULT[best_strat]
     sl_dist = current_atr * ATR_SL_MULT[best_strat]
@@ -1163,6 +1203,7 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0):
         # 趨勢特有
         "strategy_type":  "trend",
         "hold_days":      3,
+        "entry_timing":   entry_timing,
     }
 
 

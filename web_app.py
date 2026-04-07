@@ -659,27 +659,47 @@ def run_background_scan():
                     state["scan_timestamp"] = time.time()  # 即使無結果也更新時間戳
                     state["btc_trend"] = btc_trend
 
-            # ── 趨勢掃描（4H K線，每 TREND_EVERY_N 輪跑一次）──
+            # ── 趨勢掃描（4H 定向 + 1H 入場，每 TREND_EVERY_N 輪跑一次）──
             if is_trend_round:
-                add_log(f"[趨勢] 開始趨���掃描（4H K線，每 {TREND_EVERY_N} 輪一次）...")
+                add_log(f"[趨勢] 開始趨勢掃描（4H定向+1H入場，每 {TREND_EVERY_N} 輪一次）...")
                 try:
                     trend_candidates = fetch_trend_candidates(tickers)
                     trend_results = []
+                    # Phase 1: 並行抓取 4H + 1H K線
+                    klines_map = {}  # symbol -> {"4h": [...], "1h": [...]}
                     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                        futures = {
-                            executor.submit(fetch_klines, c["symbol"], "4h", 300): c
+                        futures_4h = {
+                            executor.submit(fetch_klines, c["symbol"], "4h", 300): ("4h", c)
                             for c in trend_candidates
                         }
-                        for future in as_completed(futures):
-                            coin = futures[future]
+                        futures_1h = {
+                            executor.submit(fetch_klines, c["symbol"], "1h", 100): ("1h", c)
+                            for c in trend_candidates
+                        }
+                        for future in as_completed({**futures_4h, **futures_1h}):
+                            if future in futures_4h:
+                                tf, coin = futures_4h[future]
+                            else:
+                                tf, coin = futures_1h[future]
                             try:
-                                klines_4h = future.result()
-                                if klines_4h and len(klines_4h) >= 60:
-                                    tres = analyze_trend(coin["symbol"], klines_4h, coin["change"], learner, btc_trend)
-                                    if tres:
-                                        trend_results.append(tres)
+                                kdata = future.result()
+                                sym = coin["symbol"]
+                                if sym not in klines_map:
+                                    klines_map[sym] = {"coin": coin, "4h": None, "1h": None}
+                                klines_map[sym][tf] = kdata
                             except Exception:
                                 pass
+
+                    # Phase 2: 分析（4H 定向 + 1H 入場確認）
+                    for sym, data in klines_map.items():
+                        klines_4h = data["4h"]
+                        klines_1h = data["1h"]
+                        coin = data["coin"]
+                        if klines_4h and len(klines_4h) >= 60:
+                            tres = analyze_trend(coin["symbol"], klines_4h, coin["change"],
+                                                 learner, btc_trend, klines_1h=klines_1h)
+                            if tres:
+                                trend_results.append(tres)
                     trend_results.sort(key=lambda x: x["best_score"], reverse=True)
                     with state_lock:
                         state["trend_results"] = trend_results[:5]
