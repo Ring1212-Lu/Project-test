@@ -938,9 +938,9 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         elif _rt_rsi < 35: rt_chaodi_score += 1
         if _rt_mfi < 30: rt_chaodi_score += 2
         elif _rt_mfi < 40: rt_chaodi_score += 1
-        # OBV exhaustion
+        # OBV exhaustion (先跌後回升：-4 > -2 且 -1 > -2，與回測 ci-3/ci-1/ci 對齊)
         if (len(obv_vals) >= 4 and
-                obv_vals[-3] > obv_vals[-2] and obv_vals[-1] > obv_vals[-2]):
+                obv_vals[-4] > obv_vals[-2] and obv_vals[-1] > obv_vals[-2]):
             rt_chaodi_score += 2
         # BB lower touch
         if bb_lower and bb_lower[-1] > 0 and closes[-1] <= bb_lower[-1] * 1.005:

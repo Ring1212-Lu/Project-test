@@ -116,3 +116,4 @@
 - [ ] 預設參數是否在 backtest.py / learning_engine.py / crypto_monitor_v2.py 三處同步？（每次調整閾值後 grep 確認）
 - [ ] Unicode / 編碼是否正確？（特別是中文字串）
 - [ ] 前端顯示值是否與後端實際值一致？
+- [ ] 即時版指標計算是否與回測版對齊？（index offset、陣列長度差異、窗口寬度需逐一比對）

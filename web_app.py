@@ -97,7 +97,7 @@ def notify_strong_signals(results, tag="短線"):
         sym = r["symbol"].replace("_USDT_PERP", "")
         hold = f"持倉 {r.get('hold_days', '?')} 天" if r.get("strategy_type") == "trend" else ""
         timing = f"入場:{r.get('entry_timing', '')}" if r.get("entry_timing") else ""
-        chaodi_info = f"抄底分:{r.get('chaodi_score')}" if r.get("chaodi_score") is not None else ""
+        chaodi_info = f"抄底分:{r.get('chaodi_score')}" if r.get("chaodi_score") else ""
         lines.append(
             f"```\n[{tag}] {sym} | {r['best_strat']} | "
             f"分數:{r['best_score']} 勝率:{r['best_rate']}%\n"
