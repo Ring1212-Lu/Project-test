@@ -832,6 +832,7 @@ function renderTrendResult(r, rank) {
         <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
             <span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;background:${stratBg};color:${stratColor}">${r.best_strat}</span>
             <span class="signal-badge signal-${r.signal_strength}">${r.signal_strength}</span>
+            ${r.entry_timing === '1H_WAIT' ? '<span style="font-size:11px;color:#d29922;padding:2px 6px;border-radius:4px;background:rgba(210,153,34,0.15);font-weight:600">⏳ 等待入場</span>' : r.entry_timing === '1H_PULLBACK' ? '<span style="font-size:11px;color:#3fb950;padding:2px 6px;border-radius:4px;background:rgba(63,185,80,0.15)">✓ 回調入場</span>' : '<span style="font-size:11px;color:#8b949e;padding:2px 6px;border-radius:4px;background:rgba(56,139,253,0.08)">4H訊號</span>'}
             <span style="font-size:11px;color:#8b949e;padding:2px 6px;border-radius:4px;background:rgba(56,139,253,0.08)">持倉: 3-7天</span>
             <span style="margin-left:auto;font-size:13px;color:${borderColor};font-weight:700">分數: ${r.best_score}</span>
         </div>
