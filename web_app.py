@@ -731,6 +731,9 @@ def run_background_scan():
                 except Exception as e:
                     print(f"[TREND] Error: {e}")
                     add_log(f"[趨勢] 趨勢掃描出錯: {e}")
+                    # 即使掃描失敗也更新時間戳，避免 bot 端誤判為「信號過期」
+                    with state_lock:
+                        state["trend_scan_timestamp"] = time.time()
 
             # 學習統計
             stats = learner.data["stats"]

@@ -1141,8 +1141,8 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
                     # 距離 EMA20 在 -2% ~ +1% 範圍 + RSI 35-60（不過冷）
                     if -0.02 <= dist_to_ema20 <= 0.01 and 35 <= rsi_1h_val <= 60:
                         entry_timing = "1H_PULLBACK"  # 最佳：反彈至均線
-                    elif dist_to_ema20 < -0.02 and rsi_1h_val > 30:
-                        entry_timing = "1H_BELOW"     # 可接受：在均線下方但未過冷
+                    elif dist_to_ema20 < -0.02 and 30 < rsi_1h_val < 55:
+                        entry_timing = "1H_BELOW"     # 可接受：在均線下方但未過冷也未過熱
                     else:
                         entry_timing = "1H_REJECT"    # 不適合入場
 
