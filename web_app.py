@@ -107,7 +107,7 @@ def notify_strong_signals(results, tag="短線"):
 
 
 # 做空策略集合（用於判斷 side）
-SELL_STRATEGIES = {"做空", "做空(寬)", "趨勢做空"}
+from crypto_monitor_v2 import SELL_STRATEGIES  # noqa: E402 — 共享常數
 
 # 全域狀態
 state = {
@@ -379,7 +379,7 @@ def run_trading_bot(initial_balance=100):
                             entry_price=price, tp_price=tr["tp"], sl_price=tr["sl"],
                             rate=tr["best_rate"], score=tr["best_score"],
                             regime=tr.get("regime", "unknown"),
-                            ttl=72 * 3600,
+                            ttl=72 * 3600, atr=tr.get("atr", 0),
                         )
                         add_trading_log(f"[TREND] OPEN {sym_short} {strat}({side}) "
                                         f"{size_usd}U | Score:{tr['best_score']} | TP:{tr['tp']} SL:{tr['sl']}")
@@ -482,6 +482,7 @@ def run_trading_bot(initial_balance=100):
                     symbol=r["symbol"], strategy=strat,
                     entry_price=price, tp_price=r["tp"], sl_price=r["sl"],
                     rate=r["best_rate"], score=r["best_score"], regime=r["regime"],
+                    atr=r.get("atr", 0),
                 )
                 opened += 1
                 add_trading_log(f"OPEN {r['symbol'].replace('_USDT_PERP','')} {strat}({side}) "
@@ -658,6 +659,7 @@ def run_background_scan():
                         rate=r["best_rate"],
                         score=r["best_score"],
                         regime=r["regime"],
+                        atr=r.get("atr", 0),
                     )
 
                 # 記錄寬鬆版預測（用於 A/B 比較）

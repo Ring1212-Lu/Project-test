@@ -237,7 +237,7 @@ class LearningEngine:
     # ---- 預測記錄 ----
 
     def record_prediction(self, symbol, strategy, entry_price, tp_price, sl_price,
-                          rate, score, regime="unknown", ttl=None):
+                          rate, score, regime="unknown", ttl=None, atr=0):
         """記錄一筆預測（同幣+同策略去重，避免 pending 溢出）"""
         with self._lock:
             # 去重：同幣種+同策略尚在 pending 中 → 跳過
@@ -254,6 +254,7 @@ class LearningEngine:
                 "rate":        rate,
                 "score":       score,
                 "regime":      regime,
+                "atr":         atr,
                 "timestamp":   time.time(),
                 "time_str":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "ttl":         ttl if ttl is not None else self.PREDICTION_TTL,
@@ -321,15 +322,18 @@ class LearningEngine:
         對齊回測/實盤的驗證邏輯：
         1. 觸及止盈 → 勝
         2. 觸及止損 → 敗
-        3. 超時（短線 7200s / 趨勢 7天）→ 扣費後方向判定
+        3. 保本止損：盈利曾 >= 1 ATR 且回撤至 entry ± 0.3% → 扣費後判定
+        4. 超時（短線 7200s / 趨勢 7天）→ 扣費後方向判定
         """
         entry = pred["entry_price"]
         tp    = pred["tp_price"]
         sl    = pred["sl_price"]
         strat = pred["strategy"]
+        atr   = pred.get("atr", 0)
 
         is_short = "做空" in strat
         is_trend = "趨勢" in strat
+        fee_cost = entry * 0.0015  # 對齊 BT_FEE_RATE
 
         # TP/SL 判定（與實盤 check_positions 一致）
         if is_short:
@@ -343,10 +347,24 @@ class LearningEngine:
             if current_price <= sl:
                 return False
 
+        # 保本止損模擬（對齊回測/實盤 breakeven_margin=0.003）
+        # 若當前盈利曾 >= 1 ATR 且價格已回撤至保本區域
+        if atr > 0 and not is_trend:
+            breakeven_margin = 0.003
+            if is_short:
+                profit_dist = entry - current_price
+                breakeven_sl = entry * (1 - breakeven_margin)
+                if profit_dist >= atr and current_price >= breakeven_sl:
+                    return (entry - current_price) > fee_cost
+            else:
+                profit_dist = current_price - entry
+                breakeven_sl = entry * (1 + breakeven_margin)
+                if profit_dist >= atr and current_price <= breakeven_sl:
+                    return (current_price - entry) > fee_cost
+
         # 超時判定（對齊實盤 MAX_POSITION_AGE / MAX_TREND_POSITION_AGE）
         timeout = 7 * 24 * 3600 if is_trend else 7200
         if age >= timeout:
-            fee_cost = entry * 0.0015  # 對齊 BT_FEE_RATE
             if is_short:
                 return (entry - current_price) > fee_cost
             else:

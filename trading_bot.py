@@ -48,7 +48,9 @@ except ImportError:
         return text
 
 
-FEE_RATE = 0.0005  # 0.05% per side (taker)
+FEE_RATE = 0.0005  # 0.05% per side (taker). Round-trip = 0.10%.
+# 注意：回測/EV/學習引擎驗證用 0.0015 (含 slippage 0.05%)，此處為純手續費。
+# 實盤 PnL 計算偏樂觀約 0.05%，屬保守設計（回測更嚴格）。
 MAX_POSITION_AGE = 7200  # 2 hours in seconds
 
 # Trend strategy constants
@@ -418,6 +420,11 @@ def check_positions(risk_mgr, client):
                 reason = "SL"
 
         if should_close:
+            # 防止雙重平倉：確認倉位仍存在
+            with risk_mgr._lock:
+                if pos["id"] not in {p["id"] for p in risk_mgr.open_positions}:
+                    continue
+
             # 計算 PnL (subtract round-trip fees)
             fee = size * FEE_RATE * 2
             if side == "SELL":
@@ -429,17 +436,21 @@ def check_positions(risk_mgr, client):
             close_side = "BUY" if side == "SELL" else "SELL"
             result = client.place_order(sym, close_side, "MARKET", pos["quantity"])
 
-            risk_mgr.record_close(pos, round(pnl, 4))
-            pnl_str = f"+{pnl:.4f}" if pnl >= 0 else f"{pnl:.4f}"
-            pnl_color = 'green' if pnl >= 0 else 'red'
+            # 只在下單成功或紙交易模式下才記錄平倉
+            if result.get("result") or result.get("paper_mode"):
+                risk_mgr.record_close(pos, round(pnl, 4))
+                pnl_str = f"+{pnl:.4f}" if pnl >= 0 else f"{pnl:.4f}"
+                pnl_color = 'green' if pnl >= 0 else 'red'
 
-            print(color(f"\n{tag} [CLOSE] {sym_short} {reason} | PnL: {pnl_str}U ({pnl_pct:+.2f}%)", pnl_color))
-            print(f"   策略: {pos.get('strategy','')} | 方向: {side} | "
-                  f"進場: {entry} → 出場: {current} | TP:{tp} SL:{sl}")
-            if is_trend:
-                age_str = f"{age_seconds/3600:.1f}h" if opened_at_str else "?"
-                print(f"   持倉時間: {age_str} | 手續費: {fee:.4f}U")
-            save_trade_log(risk_mgr)
+                print(color(f"\n{tag} [CLOSE] {sym_short} {reason} | PnL: {pnl_str}U ({pnl_pct:+.2f}%)", pnl_color))
+                print(f"   策略: {pos.get('strategy','')} | 方向: {side} | "
+                      f"進場: {entry} → 出場: {current} | TP:{tp} SL:{sl}")
+                if is_trend:
+                    age_str = f"{age_seconds/3600:.1f}h" if opened_at_str else "?"
+                    print(f"   持倉時間: {age_str} | 手續費: {fee:.4f}U")
+                save_trade_log(risk_mgr)
+            else:
+                print(color(f"\n{tag} [CLOSE FAILED] {sym_short} 平倉下單失敗，保留倉位下輪重試: {result}", 'red'))
         else:
             # 持倉監控摘要（每次檢查都記錄，方便追蹤）
             if side == "SELL":
@@ -570,8 +581,8 @@ def run_trading_loop(client, risk_mgr, learner):
 
             # 預先構建 position dict（try_open_position 需要）
             strat = r["best_strat"]
-            SELL_STRATS = {"做空", "做空(寬)", "趨勢做空"}
-            side = "SELL" if strat in SELL_STRATS else "BUY"
+            from crypto_monitor_v2 import SELL_STRATEGIES
+            side = "SELL" if strat in SELL_STRATEGIES else "BUY"
             price = r["price"]
             is_trend = strat.startswith("趨勢")
 

@@ -22,7 +22,6 @@ import requests
 import time
 import json
 import os
-import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from statistics import mean, stdev
@@ -61,6 +60,9 @@ ATR_TP_MULT = {"做空": 2.25, "抄底": 3.0, "追多": 2.7, "做空(寬)": 2.25
 ATR_SL_MULT = {"做空": 1.5, "抄底": 1.0, "追多": 1.5, "做空(寬)": 1.5, "抄底(寬)": 1.0, "趨勢做多": 3.0, "趨勢做空": 2.5}
 
 LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_data.json")
+
+# 做空策略集合（共享常數，web_app / trading_bot import 使用）
+SELL_STRATEGIES = {"做空", "做空(寬)", "趨勢做空"}
 
 # 連續虧損保護
 MAX_CONSECUTIVE_LOSSES = 3  # 連續虧損超過此數，降低信心分數
