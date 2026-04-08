@@ -84,13 +84,13 @@ class LearningEngine:
     MAX_HISTORY = 5000
     MAX_PENDING = 2000
 
-    # 市場狀態對策略的適配分數
-    # 基於實際數據更新：做空各regime 74-100%，追多各regime <40%
+    # DEPRECATED: REGIME_BONUS 不再參與評分公式（已改用數據驅動 regime_adj）
+    # 保留供 get_regime_bonus() 記錄用，將在累積足夠數據後由動態計算取代
     REGIME_BONUS = {
-        MarketRegime.TRENDING_UP:   {"做空": 1.1, "抄底": 0.9, "追多": 0.7},   # 做空78%↑, 追多28%↓
-        MarketRegime.TRENDING_DOWN: {"做空": 1.4, "抄底": 0.5, "追多": 0.5},   # 下跌趨勢：做空加成，抄底/追多大幅懲罰
-        MarketRegime.RANGING:       {"做空": 1.1, "抄底": 0.6, "追多": 0.7},   # 做空80%, 抄底45.7%實證不佳
-        MarketRegime.VOLATILE:      {"做空": 1.0, "抄底": 0.8, "追多": 0.6},   # 做空74%, 追多29%
+        MarketRegime.TRENDING_UP:   {"做空": 1.0, "抄底": 1.0, "追多": 1.0},
+        MarketRegime.TRENDING_DOWN: {"做空": 1.0, "抄底": 1.0, "追多": 1.0},
+        MarketRegime.RANGING:       {"做空": 1.0, "抄底": 1.0, "追多": 1.0},
+        MarketRegime.VOLATILE:      {"做空": 1.0, "抄底": 1.0, "追多": 1.0},
     }
 
     def __init__(self, filepath):
@@ -190,8 +190,23 @@ class LearningEngine:
         return round(value, 4)
 
     def get_regime_bonus(self, regime, strategy):
-        """取得市場狀態對策略的加成"""
-        return self.REGIME_BONUS.get(regime, {}).get(strategy, 1.0)
+        """DEPRECATED: 回傳 1.0（不再影響評分）"""
+        return 1.0
+
+    def get_regime_adj(self, regime, strategy):
+        """數據驅動的 regime 調整係數（需 >= 30 筆才生效，否則回傳 1.0）"""
+        regime_stats = self.data["stats"].get("regime_stats", {})
+        strats = regime_stats.get(regime, {})
+        base = strategy.replace("(寬)", "").strip() if "(寬)" in strategy else strategy
+        v = strats.get(base)
+        if v is None:
+            return 1.0
+        total = v.get("wins", 0) + v.get("losses", 0)
+        if total < 30:
+            return 1.0
+        wr = v["wins"] / total
+        # 以 50% 為基準，限制在 0.7 ~ 1.2
+        return max(0.7, min(1.2, wr / 0.5))
 
     def get_global_strat_winrate(self, strategy):
         """取得策略的全局歷史勝率，回傳 (win_rate, total_trades)"""
@@ -615,26 +630,6 @@ class LearningEngine:
                     elif strat == "抄底" and best["win_rate"] > 55:
                         best_long = best["rsi_long"]
 
-        # 更新 regime bonus（根據實際數據）
-        regime_stats = self.data["stats"].get("regime_stats", {})
-        updated_bonus = dict(self.REGIME_BONUS)  # 複製預設值
-        for regime, strats in regime_stats.items():
-            if regime not in updated_bonus:
-                continue
-            for strat, v in strats.items():
-                total = v["wins"] + v["losses"]
-                if total >= 5:
-                    actual_wr = v["wins"] / total
-                    # 根據勝率調整 bonus：>60% 加成，<40% 懲罰
-                    if actual_wr > 0.6:
-                        updated_bonus[regime][strat] = min(
-                            updated_bonus[regime][strat] * 1.1, 1.5
-                        )
-                    elif actual_wr < 0.4:
-                        updated_bonus[regime][strat] = max(
-                            updated_bonus[regime][strat] * 0.85, 0.4
-                        )
-
         # 計算優化前後對比
         old_params = {
             "rsi_short": params["rsi_short_thresh"],
@@ -666,7 +661,6 @@ class LearningEngine:
         if len(params["history"]) > 50:
             params["history"] = params["history"][-50:]
 
-        self.REGIME_BONUS = updated_bonus
         self.data["optimized_params"] = params
         self.save()
 

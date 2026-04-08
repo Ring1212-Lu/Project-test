@@ -189,6 +189,11 @@ class RiskManager:
         if signal.get("rr", 0) < min_rr_check:
             return False, f"風報比 {signal['rr']} < {min_rr_check}"
 
+        # EV 門檻：要求正期望值（自動考慮 WR × RR 交互作用）
+        ev = signal.get("ev", None)
+        if ev is not None and ev < 0.05:
+            return False, f"EV {ev:.3f} < 0.05（期望值不足）"
+
         return True, "OK"
 
     def record_open(self, position):

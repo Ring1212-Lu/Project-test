@@ -54,8 +54,11 @@ MAX_WORKERS = 6        # 並行執行緒數
 MAX_RETRIES = 3        # API 請求重試次數
 
 # ATR 倍數（自適應止盈止損）
-ATR_TP_MULT = {"做空": 2.0, "抄底": 3.0, "追多": 2.5, "做空(寬)": 2.0, "抄底(寬)": 3.0, "趨勢做多": 5.0, "趨勢做空": 4.0}
-ATR_SL_MULT = {"做空": 1.5, "抄底": 1.0, "追多": 1.8, "做空(寬)": 1.5, "抄底(寬)": 1.0, "趨勢做多": 3.5, "趨勢做空": 3.0}
+# ATR 倍數（所有策略 RR >= 1.5）
+# 做空: 2.25/1.5=1.50, 抄底: 3.0/1.0=3.00, 追多: 2.7/1.5=1.80
+# 趨勢做多: 5.0/3.0=1.67, 趨勢做空: 4.5/2.5=1.80
+ATR_TP_MULT = {"做空": 2.25, "抄底": 3.0, "追多": 2.7, "做空(寬)": 2.25, "抄底(寬)": 3.0, "趨勢做多": 5.0, "趨勢做空": 4.5}
+ATR_SL_MULT = {"做空": 1.5, "抄底": 1.0, "追多": 1.5, "做空(寬)": 1.5, "抄底(寬)": 1.0, "趨勢做多": 3.0, "趨勢做空": 2.5}
 
 LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_data.json")
 
@@ -582,16 +585,19 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
 
     # ATR for backtest TP/SL simulation
     atr_for_bt = calc_atr(klines)
-    # 預提取 high/low 用於更精確的回測
+    # 預提取 high/low 備用（close 為主要判定價格，對齊實盤 lastPrice 離散取樣）
     bt_highs = [float(k.get('high', k.get('close', 0))) for k in klines]
     bt_lows = [float(k.get('low', k.get('close', 0))) for k in klines]
-    BT_FEE_RATE = 0.002  # 0.1% fee + 0.1% slippage round-trip
+    BT_FEE_RATE = 0.0015  # 統一：0.05% taker × 2 sides + 0.05% slippage
+    BT_BAR_SECONDS = 300  # 5min per bar
+    BT_MAX_AGE = 7200     # 2h timeout（對齊實盤 MAX_POSITION_AGE）
+    BT_BREAKEVEN_MARGIN = 0.003  # 保本止損 margin（對齊實盤 0.3%）
 
     # 抄底專用 hold_period（超賣反彈需要更長醞釀時間）
     chaodi_hold = 30
 
     def _bt_check_win(strat_name, entry_price, bar_start, is_short_side):
-        """Bar-by-bar TP/SL hit check using high/low + fee simulation"""
+        """回測 TP/SL 判定（對齊實盤邏輯：close 取樣、超時、保本止損、SL floor）"""
         tp_mult = ATR_TP_MULT.get(strat_name, 2.0)
         sl_mult = ATR_SL_MULT.get(strat_name, 1.5)
         atr_idx = bar_start - 14
@@ -605,30 +611,70 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         tp_dist = atr_val * tp_mult - fee_cost
         sl_dist = atr_val * sl_mult + fee_cost
 
-        # 抄底使用更長的 hold_period
+        # SL floor/cap（對齊實盤 SL% 1.5%-15%）
+        sl_pct = sl_dist / entry_price * 100 if entry_price > 0 else 0
+        if sl_pct < 1.5:
+            sl_dist = entry_price * 0.015
+        elif sl_pct > 15.0:
+            sl_dist = entry_price * 0.15
+        # TP 保持原始 RR 比例
+        raw_rr = tp_mult / sl_mult if sl_mult > 0 else 2.0
+        tp_dist = sl_dist * raw_rr
+
+        # 抄底使用更長的 hold_period（但仍受超時限制）
         hp = chaodi_hold if "抄底" in strat_name else hold_period
+
+        # 保本止損追蹤
+        trailing_sl_active = False
+        elapsed = 0
 
         for j in range(1, hp + 1):
             idx = bar_start + j
             if idx >= len(closes):
                 break
-            bar_high = bt_highs[idx] if idx < len(bt_highs) else closes[idx]
-            bar_low = bt_lows[idx] if idx < len(bt_lows) else closes[idx]
+
+            # 用 close 做判定（對齊實盤 lastPrice 離散取樣）
+            bar_price = closes[idx]
+            elapsed += BT_BAR_SECONDS
+
+            # 2h 超時強平（對齊實盤 MAX_POSITION_AGE=7200s）
+            if elapsed >= BT_MAX_AGE:
+                if is_short_side:
+                    return bar_price < entry_price - fee_cost
+                else:
+                    return bar_price > entry_price + fee_cost
 
             if is_short_side:
-                # SL first (worst case): high hits SL before low hits TP
-                if bar_high >= entry_price + sl_dist:
+                # 保本止損：盈利 >= 1 ATR 時 SL 移至 entry - 0.3%
+                profit_dist = entry_price - bar_price
+                if profit_dist >= atr_val and not trailing_sl_active:
+                    trailing_sl_active = True
+
+                # SL 判定（用保本 SL 或原始 SL，取較緊者）
+                if trailing_sl_active:
+                    breakeven_sl = entry_price * (1 - BT_BREAKEVEN_MARGIN)
+                    if bar_price >= breakeven_sl:
+                        return True  # 保本出場（微利）
+                if bar_price >= entry_price + sl_dist:
                     return False
-                if bar_low <= entry_price - tp_dist:
+                if bar_price <= entry_price - tp_dist:
                     return True
             else:
-                # SL first (worst case): low hits SL before high hits TP
-                if bar_low <= entry_price - sl_dist:
+                # 保本止損：盈利 >= 1 ATR 時 SL 移至 entry + 0.3%
+                profit_dist = bar_price - entry_price
+                if profit_dist >= atr_val and not trailing_sl_active:
+                    trailing_sl_active = True
+
+                if trailing_sl_active:
+                    breakeven_sl = entry_price * (1 + BT_BREAKEVEN_MARGIN)
+                    if bar_price <= breakeven_sl:
+                        return True  # 保本出場（微利）
+                if bar_price <= entry_price - sl_dist:
                     return False
-                if bar_high >= entry_price + tp_dist:
+                if bar_price >= entry_price + tp_dist:
                     return True
 
-        # Neither hit: check final price (minus fees)
+        # Neither hit within timeout: check final price (minus fees)
         final_idx = min(bar_start + hp, len(closes) - 1)
         if is_short_side:
             return closes[final_idx] < entry_price - fee_cost
@@ -803,8 +849,10 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             elif global_wr < 45:
                 global_penalty = 0.8
 
-        # Ranging 收緊：ranging 下技術指標信噪比最低
-        regime_adj = 0.85 if regime == "ranging" else 1.0
+        # Regime 調整：數據驅動（>= 30 筆才生效），冷啟動期預設 ranging=0.85
+        regime_adj = learner.get_regime_adj(regime, base_strat)
+        if regime_adj == 1.0 and regime == "ranging":
+            regime_adj = 0.85  # 冷啟動 fallback
 
         # 最終分數 = adj_rate（貝葉斯校正勝率）× weight × global × regime_adj
         score = adj_rate * weight * global_penalty * regime_adj
@@ -1025,6 +1073,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         "env_multiplier": best.get("env_multiplier", 1.0),
         "env_detail":     best.get("env_detail", ""),
         "signal_strength": signal_strength,
+        "ev":             best.get("ev", 0),
         "chaodi_score":   rt_chaodi_score if best_strat == "抄底" else None,
         "detail":         detail,
         "relaxed_detail":  relaxed_detail,
@@ -1109,6 +1158,12 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
     regime = MarketRegime.detect(closes)
 
     hold_period = 18  # ≈3 days of 4h candles
+    # 趨勢回測對齊實盤常數
+    TREND_BT_BAR_SEC = 14400          # 4h per bar
+    TREND_BT_MAX_AGE = 7 * 24 * 3600  # 7 days（對齊 MAX_TREND_POSITION_AGE）
+    TREND_BT_FEE_RATE = 0.0015        # 統一手續費
+    TREND_BT_TRAIL_TRIGGER = 0.05     # 5% 利潤觸發（對齊 TREND_TRAILING_TRIGGER）
+    TREND_BT_TRAIL_STEP = 0.03        # 3% 回撤止損（對齊 TREND_TRAILING_STEP）
 
     # 回測驗證
     stats = {
@@ -1116,13 +1171,82 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
         "趨勢做空": {"win": 0, "total": 0},
     }
 
+    def _trend_bt_check(price_i, atr_i, is_short, bar_start):
+        """趨勢回測 TP/SL 判定（對齊實盤：trailing stop、手續費、SL floor、超時）"""
+        strat_name = "趨勢做空" if is_short else "趨勢做多"
+        tp_mult = ATR_TP_MULT[strat_name]
+        sl_mult = ATR_SL_MULT[strat_name]
+        fee_cost = price_i * TREND_BT_FEE_RATE
+        tp_dist = atr_i * tp_mult - fee_cost
+        sl_dist = atr_i * sl_mult + fee_cost
+
+        # SL floor/cap（對齊實盤 1.5%-15%）
+        sl_pct = sl_dist / price_i * 100 if price_i > 0 else 0
+        if sl_pct < 1.5:
+            sl_dist = price_i * 0.015
+        elif sl_pct > 15.0:
+            sl_dist = price_i * 0.15
+        raw_rr = tp_mult / sl_mult if sl_mult > 0 else 1.5
+        tp_dist = sl_dist * raw_rr
+
+        trailing_sl = None
+        peak_profit_pct = 0
+        elapsed = 0
+
+        for j in range(1, hold_period + 1):
+            idx = bar_start + j
+            if idx >= len(closes):
+                break
+            fp = closes[idx]
+            elapsed += TREND_BT_BAR_SEC
+
+            # 超時強平
+            if elapsed >= TREND_BT_MAX_AGE:
+                if is_short:
+                    return fp < price_i - fee_cost
+                else:
+                    return fp > price_i + fee_cost
+
+            if is_short:
+                profit_pct = (price_i - fp) / price_i
+                # Trailing stop：利潤 >= 5% 時啟動
+                if profit_pct > TREND_BT_TRAIL_TRIGGER:
+                    new_sl = fp * (1 + TREND_BT_TRAIL_STEP)
+                    if trailing_sl is None or new_sl < trailing_sl:
+                        trailing_sl = new_sl
+                # 檢查 trailing SL
+                if trailing_sl is not None and fp >= trailing_sl:
+                    return True  # trailing stop 觸發（有利潤）
+                if fp >= price_i + sl_dist:
+                    return False
+                if fp <= price_i - tp_dist:
+                    return True
+            else:
+                profit_pct = (fp - price_i) / price_i
+                if profit_pct > TREND_BT_TRAIL_TRIGGER:
+                    new_sl = fp * (1 - TREND_BT_TRAIL_STEP)
+                    if trailing_sl is None or new_sl > trailing_sl:
+                        trailing_sl = new_sl
+                if trailing_sl is not None and fp <= trailing_sl:
+                    return True
+                if fp <= price_i - sl_dist:
+                    return False
+                if fp >= price_i + tp_dist:
+                    return True
+
+        # 超時：用最後收盤價判定
+        final_idx = min(bar_start + hold_period, len(closes) - 1)
+        if is_short:
+            return closes[final_idx] < price_i - fee_cost
+        else:
+            return closes[final_idx] > price_i + fee_cost
+
     for i in range(60, len(closes) - hold_period):
         if i >= len(ema20) or i >= len(ema50):
             continue
         e20 = ema20[i]
         e50 = ema50[i]
         price_i = closes[i]
-        future_price = closes[i + hold_period]
 
         # RSI index alignment
         rsi_offset = len(closes) - len(rsi_vals)
@@ -1136,38 +1260,16 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
         atr_idx = i - atr_offset
         atr_i = atr_vals[atr_idx] if 0 <= atr_idx < len(atr_vals) else price_i * 0.02
 
-        # 趨勢做多（含持倉期間 ATR 自適應 TP/SL 檢查）
+        # 趨勢做多
         if e20 > e50 and price_i > e20 and 45 <= rsi_i <= 75:
             stats["趨勢做多"]["total"] += 1
-            tp_dist = atr_i * ATR_TP_MULT["趨勢做多"]
-            sl_dist = atr_i * ATR_SL_MULT["趨勢做多"]
-            tp_hit, sl_hit = False, False
-            for j in range(1, hold_period + 1):
-                fp = closes[i + j]
-                if fp >= price_i + tp_dist:
-                    tp_hit = True
-                    break
-                if fp <= price_i - sl_dist:
-                    sl_hit = True
-                    break
-            if tp_hit or (not sl_hit and future_price > price_i):
+            if _trend_bt_check(price_i, atr_i, is_short=False, bar_start=i):
                 stats["趨勢做多"]["win"] += 1
 
-        # 趨勢做空（含持倉期間 ATR 自適應 TP/SL 檢查，RSI 30-50）
+        # 趨勢做空
         if e20 < e50 and price_i < e20 and 30 <= rsi_i <= 50:
             stats["趨勢做空"]["total"] += 1
-            tp_dist = atr_i * ATR_TP_MULT["趨勢做空"]
-            sl_dist = atr_i * ATR_SL_MULT["趨勢做空"]
-            tp_hit, sl_hit = False, False
-            for j in range(1, hold_period + 1):
-                fp = closes[i + j]
-                if fp <= price_i - tp_dist:
-                    tp_hit = True
-                    break
-                if fp >= price_i + sl_dist:
-                    sl_hit = True
-                    break
-            if tp_hit or (not sl_hit and future_price < price_i):
+            if _trend_bt_check(price_i, atr_i, is_short=True, bar_start=i):
                 stats["趨勢做空"]["win"] += 1
 
     # 計算分數
@@ -1178,6 +1280,7 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
     best_score = 0
     best_rate_val = 0
     best_total = 0
+    best_ev = 0
 
     for strat, s in stats.items():
         if s["total"] < 3:
@@ -1200,36 +1303,32 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
                 continue
 
         weight = learner.get_weight(symbol, strat)
-        confidence = min(s["total"] / 10.0, 1.5) if s["total"] >= 3 else 0
 
-        # BTC trend bonus
-        btc_bonus = 0
-        if is_long and btc_trend == 1:
-            btc_bonus = 0.15
-        elif not is_long and btc_trend == -1:
-            btc_bonus = 0.15
-        elif is_long and btc_trend == -1:
-            btc_bonus = -0.10
-        elif not is_long and btc_trend == 1:
-            btc_bonus = -0.10
+        # 貝葉斯收縮（與短線策略一致）
+        BAYES_K = 20
+        n = s["total"]
+        adj_rate = 50.0 + (r - 50.0) * n / (n + BAYES_K) if n >= 3 else 50.0
 
-        # Volume confirmation
-        vol_bonus = 0.10 if vol_above_avg else 0
+        # EV 計算
+        tp_mult = ATR_TP_MULT[strat]
+        sl_mult = ATR_SL_MULT[strat]
+        _atr_pct = current_atr / current_price * 100 if current_price > 0 else 1.0
+        wr_dec = adj_rate / 100.0
+        ev = wr_dec * tp_mult - (1 - wr_dec) * sl_mult - 0.15 / _atr_pct
 
-        # OBV confirmation
-        obv_bonus = 0
-        if is_long and obv_dir == 1:
-            obv_bonus = 0.10
-        elif not is_long and obv_dir == -1:
-            obv_bonus = 0.10
+        # Regime 調整
+        regime_adj = learner.get_regime_adj(regime, strat)
+        if regime_adj == 1.0 and regime == "ranging":
+            regime_adj = 0.85
 
-        score = r * confidence * weight * (1.0 + btc_bonus + vol_bonus + obv_bonus)
+        score = adj_rate * weight * regime_adj
 
         if score > best_score:
             best_score = score
             best_strat = strat
             best_rate_val = r
             best_total = s["total"]
+            best_ev = round(ev, 3)
 
     if not best_strat:
         return None
@@ -1330,6 +1429,7 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
         "best_total":     best_total,
         "best_score":     round(best_score, 1),
         "signal_strength": signal_strength,
+        "ev":             best_ev,
         # 進出場
         "tp":             tp_price,
         "sl":             sl_price,
