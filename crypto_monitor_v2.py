@@ -241,9 +241,29 @@ def obv_trend(obv_vals, lookback=30):
     return 0
 
 
+def _find_local_minima(arr, order=3):
+    """找局部極小值索引（前後 order 根都比它高）"""
+    minima = []
+    for i in range(order, len(arr) - order):
+        if all(arr[i] <= arr[i - j] for j in range(1, order + 1)) and \
+           all(arr[i] <= arr[i + j] for j in range(1, order + 1)):
+            minima.append(i)
+    return minima
+
+
+def _find_local_maxima(arr, order=3):
+    """找局部極大值索引（前後 order 根都比它低）"""
+    maxima = []
+    for i in range(order, len(arr) - order):
+        if all(arr[i] >= arr[i - j] for j in range(1, order + 1)) and \
+           all(arr[i] >= arr[i + j] for j in range(1, order + 1)):
+            maxima.append(i)
+    return maxima
+
+
 def detect_rsi_divergence(closes, rsi_vals, lookback=20):
     """
-    偵測 RSI 背離（比閾值交叉更強的反轉信號）
+    偵測 RSI 背離（使用局部極值，避免半窗口切分的假背離）
     - 看漲背離：價格創新低，RSI 沒有 → 買入信號
     - 看跌背離：價格創新高，RSI 沒有 → 賣出信號
     回傳: 1=看漲背離, -1=看跌背離, 0=無背離
@@ -254,20 +274,23 @@ def detect_rsi_divergence(closes, rsi_vals, lookback=20):
     recent_closes = closes[-lookback:]
     recent_rsi = rsi_vals[-lookback:]
 
-    # 找前半和後半的極值
-    mid = lookback // 2
-    first_half_c = recent_closes[:mid]
-    second_half_c = recent_closes[mid:]
-    first_half_r = recent_rsi[:mid]
-    second_half_r = recent_rsi[mid:]
+    # 用局部極值找 swing low / swing high（order=3：前後 3 根）
+    price_lows = _find_local_minima(recent_closes, order=3)
+    price_highs = _find_local_maxima(recent_closes, order=3)
 
-    # 看跌背離：價格新高但 RSI 沒新高
-    if max(second_half_c) > max(first_half_c) and max(second_half_r) < max(first_half_r):
-        return -1
+    # 看漲背離：最近兩個 swing low，價格更低但 RSI 更高
+    if len(price_lows) >= 2:
+        i1, i2 = price_lows[-2], price_lows[-1]
+        if (recent_closes[i2] < recent_closes[i1] and
+                recent_rsi[i2] > recent_rsi[i1]):
+            return 1
 
-    # 看漲背離：價格新低但 RSI 沒新低
-    if min(second_half_c) < min(first_half_c) and min(second_half_r) > min(first_half_r):
-        return 1
+    # 看跌背離：最近兩個 swing high，價格更高但 RSI 更低
+    if len(price_highs) >= 2:
+        i1, i2 = price_highs[-2], price_highs[-1]
+        if (recent_closes[i2] > recent_closes[i1] and
+                recent_rsi[i2] < recent_rsi[i1]):
+            return -1
 
     return 0
 
@@ -498,6 +521,26 @@ def get_higher_tf_trend(symbol):
     return 0
 
 
+def get_htf_bb_position(symbol):
+    """15 分鐘布林帶位置確認（防止 1M 噪音誤判抄底）"""
+    klines_15m = fetch_klines(symbol, interval="15M", limit=60)
+    if not klines_15m or len(klines_15m) < 25:
+        return None  # 無法取得時不阻擋（保守）
+    closes_15m = [float(k['close']) for k in klines_15m if float(k.get('close', 0)) > 0]
+    if len(closes_15m) < 25:
+        return None
+    bb_mid_15m, bb_upper_15m, bb_lower_15m = calc_bollinger(closes_15m)
+    if not bb_mid_15m or not bb_lower_15m:
+        return None
+    price = closes_15m[-1]
+    if price > bb_mid_15m[-1]:
+        return "above_mid"
+    elif price <= bb_lower_15m[-1] * 1.02:
+        return "near_lower"
+    else:
+        return "below_mid"
+
+
 def fetch_and_analyze(coin, learner, opt_params=None, btc_trend=0):
     """單一幣種：抓取 + 分析（供並行使用）"""
     sym = coin["symbol"]
@@ -506,11 +549,13 @@ def fetch_and_analyze(coin, learner, opt_params=None, btc_trend=0):
         return None
     # 多時間框架確認
     htf_trend = get_higher_tf_trend(sym)
+    # 15M 布林帶位置（用於抄底安全檢查）
+    htf_bb_pos = get_htf_bb_position(sym)
     # 使用 ticker 即時價格（比 K 線收盤價更即時）
     realtime_price = coin.get("price", None)
     return analyze(sym, klines, round(coin["change"], 2), learner, opt_params,
                    btc_trend=btc_trend, htf_trend=htf_trend,
-                   realtime_price=realtime_price)
+                   realtime_price=realtime_price, htf_bb_pos=htf_bb_pos)
 
 
 # ============================================================
@@ -518,7 +563,7 @@ def fetch_and_analyze(coin, learner, opt_params=None, btc_trend=0):
 # ============================================================
 
 def analyze(symbol, klines, change24h, learner, opt_params=None,
-            btc_trend=0, htf_trend=0, realtime_price=None):
+            btc_trend=0, htf_trend=0, realtime_price=None, htf_bb_pos=None):
     closes = [float(k['close']) for k in klines if float(k.get('close', 0)) > 0]
     if len(closes) < 60:
         return None
@@ -591,7 +636,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
     bt_highs = [float(k.get('high', k.get('close', 0))) for k in klines]
     bt_lows = [float(k.get('low', k.get('close', 0))) for k in klines]
     BT_FEE_RATE = 0.0015  # 統一：0.05% taker × 2 sides + 0.05% slippage
-    BT_BAR_SECONDS = 300  # 5min per bar
+    BT_BAR_SECONDS = 60   # 1min per bar（資料為 1M K線）
     BT_MAX_AGE = 7200     # 2h timeout（對齊實盤 MAX_POSITION_AGE）
     BT_BREAKEVEN_MARGIN = 0.003  # 保本止損 margin（對齊實盤 0.3%）
 
@@ -749,26 +794,28 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         if _bb_touch:
             chaodi_score += 2
 
-        # (5) RSI 看漲背離（價格新低但 RSI 沒有）
+        # (5) RSI 看漲背離（使用局部極值，非半窗口切分）
         if ci >= 20:
             _local_closes = closes[ci - 20:ci + 1]
             _local_rsi_offset = ci - (len(closes) - len(rsi_vals))
             if _local_rsi_offset >= 20:
                 _local_rsi = rsi_vals[_local_rsi_offset - 20:_local_rsi_offset + 1]
                 if len(_local_closes) >= 20 and len(_local_rsi) >= 20:
-                    _mid = 10
-                    if (min(_local_closes[_mid:]) < min(_local_closes[:_mid]) and
-                            min(_local_rsi[_mid:]) > min(_local_rsi[:_mid])):
-                        chaodi_score += 3  # 看漲背離 = 強烈底部信號
+                    _lows = _find_local_minima(_local_closes, order=3)
+                    if len(_lows) >= 2:
+                        _i1, _i2 = _lows[-2], _lows[-1]
+                        if (_local_closes[_i2] < _local_closes[_i1] and
+                                _local_rsi[_i2] > _local_rsi[_i1]):
+                            chaodi_score += 3  # 看漲背離 = 強烈底部信號
 
         # (6) 放量（當前量 > 20根平均量 × 1.5）
         _avg_vol = mean(volumes[max(0, ci - 20):ci]) if ci >= 20 else vol
         if _avg_vol > 0 and vol > _avg_vol * 1.5:
             chaodi_score += 1
 
-        # (7) Pump-dump 過濾：20根內最高價/當前價 < 1.5
-        _peak_20 = max(closes[max(0, ci - 20):ci + 1])
-        _not_post_pump = (_peak_20 / price) < 1.5 if price > 0 else True
+        # (7) Pump-dump 過濾：60根內最高價/當前價 < 1.2（抓暴漲後回落）
+        _peak_60 = max(closes[max(0, ci - 60):ci + 1])
+        _not_post_pump = (_peak_60 / price) < 1.2 if price > 0 else True
 
         # (8) 連跌保護（≥4 根不抄底）
         _bt_consec = 0
@@ -778,9 +825,14 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             else:
                 break
 
-        # 嚴格版：需 ≥ 6 分 + RSI 反彈 + MACD 向上 + 非 pump-dump + 連跌<4
+        # 結構信號：至少需要 BB 觸底或背離（防止純振盪指標湊分）
+        # 背離已在 (5) 用局部極值偵測，chaodi_score 包含 +3 分即表示有背離
+        _has_divergence = chaodi_score >= 3 and ci >= 20  # 背離 +3 分
+        _has_structure = _bb_touch or _has_divergence
+
+        # 嚴格版：需 ≥ 6 分 + RSI 反彈 + MACD 向上 + 非 pump-dump + 連跌<4 + 結構信號
         if (chaodi_score >= 6 and rsi_cur > rsi_prev and macd_up
-                and _not_post_pump and _bt_consec < 4):
+                and _not_post_pump and _bt_consec < 4 and _has_structure):
             stats["抄底"]["total"] += 1
             stats["抄底"]["vol_sum"] += vol
             if _bt_check_win("抄底", price, ci, is_short_side=False):
@@ -821,11 +873,12 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         weight = learner.get_weight(symbol, base_strat)
 
         # === 貝葉斯收縮（取代舊 confidence 膨脹）===
-        # 少樣本時拉向 50%（無信息先驗），多樣本時保持觀測值
-        # adj_rate = 50 + (rate - 50) * n / (n + k)，k=20 為等效樣本數
+        # 少樣本時拉向先驗，多樣本時保持觀測值
+        # 抄底先驗 42%（1M 抄底基準率低於 50%），其他策略 50%
         BAYES_K = 20
+        BAYES_PRIOR = 42.0 if base_strat == "抄底" else 50.0
         n = s["total"]
-        adj_rate = 50.0 + (r - 50.0) * n / (n + BAYES_K) if n >= MIN_SIG else 50.0
+        adj_rate = BAYES_PRIOR + (r - BAYES_PRIOR) * n / (n + BAYES_K) if n >= MIN_SIG else BAYES_PRIOR
 
         # === 期望值 EV（取代單純勝率）===
         # EV = WR * avg_win_pct - (1-WR) * avg_loss_pct - fee
@@ -899,30 +952,41 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         best_strat = max(valid, key=lambda k: valid[k]["score"])
         best = valid[best_strat]
 
-    # 抄底 v2 即時安全檢查（多層防護）
+    # 抄底 v2 即時安全檢查（多層防護，每條獨立判斷）
     if best_strat == "抄底":
         blocked = False
         block_reason = ""
 
-        # Pump-dump 過濾：24h 漲幅 > 30% 的幣不抄底
-        if change24h > 30:
+        # (A) Pump-dump 過濾：24h 漲幅 > 15% 的幣不抄底
+        if change24h > 15:
             blocked = True
-            block_reason = f"24h漲幅{change24h:+.1f}%，暴漲回落非超賣"
-        # 連跌 ≥4 根：賣壓未竭
-        elif consec_down >= 4:
+            block_reason = f"24h漲幅{change24h:+.1f}%，趨勢性上漲中不抄底"
+        # (B) 連跌 ≥4 根：賣壓未竭
+        if not blocked and consec_down >= 4:
             blocked = True
             block_reason = f"連跌 {consec_down} 根K線，賣壓未竭"
-        # trending_down 時需 RSI < 25 才允許（極度超賣才可）
-        elif regime == "trending_down":
+        # (C) trending_down 時需 RSI < 25 才允許（極度超賣才可）
+        if not blocked and regime == "trending_down":
             current_rsi_check = rsi_vals[-1] if rsi_vals else 50
             if current_rsi_check >= 25:
                 blocked = True
                 block_reason = f"trending_down + RSI={current_rsi_check:.1f}≥25，超賣不夠深"
-        # 布林帶位置檢查：不在 lower- 區域不抄底
-        if not blocked and bb_lower and bb_upper and bb_mid and closes:
-            if closes[-1] > bb_mid[-1]:
+        # (D) 5M 趨勢仍向上 → 回調非超賣（htf_trend 已在 fetch_and_analyze 計算）
+        if not blocked and htf_trend == 1:
+            blocked = True
+            block_reason = "5分鐘趨勢仍向上（htf_trend=1），回調非超賣結構"
+        # (E) 15M 布林帶位置：必須在 15M 中軌下方才允許抄底
+        if not blocked and htf_bb_pos is not None:
+            if htf_bb_pos == "above_mid":
                 blocked = True
-                block_reason = "價格在布林中軌上方，不是超賣區域"
+                block_reason = "15分鐘價格在布林中軌上方，非超賣結構"
+        # (F) 60 分鐘峰值回撤檢查：近期暴漲後回落不抄底
+        if not blocked and len(closes) >= 60:
+            peak_60 = max(closes[-60:])
+            drawdown_pct = (peak_60 - closes[-1]) / peak_60 * 100 if peak_60 > 0 else 0
+            if drawdown_pct > 8 and change24h > 10:
+                blocked = True
+                block_reason = f"近60根高點回撤{drawdown_pct:.1f}%+24h漲{change24h:+.1f}%，暴漲回落形態"
 
         if blocked:
             print(f"  [BLOCK] {symbol}: 抄底被攔截 — {block_reason}")
