@@ -457,6 +457,7 @@ def run_trading_bot(initial_balance=100):
                 "symbol": r["symbol"],
                 "side": side,
                 "strategy": strat,
+                "strategy_type": "short",
                 "entry_price": entry_price,
                 "tp_price": recalc_tp,
                 "sl_price": recalc_sl,

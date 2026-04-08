@@ -74,11 +74,11 @@ class LearningEngine:
     WEIGHT_DECAY_RATE  = 0.001   # 每小時權重向均值回歸的速率
     WEIGHT_DECAY_HOURS = 24      # 超過此時間未更新開始衰減
 
-    # 預測過期時間（秒）
-    PREDICTION_TTL = 3600 * 4   # 4 小時（縮短，提高反饋速度）
+    # 預測過期時間（秒）— 需 > 超時時間才不會提前 expire
+    PREDICTION_TTL = 3600 * 3   # 短線 3h（> 7200s 超時 + buffer）
 
     # 驗證等待時間（秒）
-    MIN_VALIDATION_AGE = 180    # 至少等 3 分鐘
+    MIN_VALIDATION_AGE = 300    # 至少等 5 分鐘（對齊回測 1 根 5min bar）
 
     # 歷史記錄上限
     MAX_HISTORY = 5000
@@ -318,10 +318,10 @@ class LearningEngine:
 
     def _check_prediction(self, pred, current_price, age):
         """
-        多階段驗證：
+        對齊回測/實盤的驗證邏輯：
         1. 觸及止盈 → 勝
         2. 觸及止損 → 敗
-        3. 超過 15 分鐘 → 用價格方向 + 幅度加權判定
+        3. 超時（短線 7200s / 趨勢 7天）→ 扣費後方向判定
         """
         entry = pred["entry_price"]
         tp    = pred["tp_price"]
@@ -329,6 +329,9 @@ class LearningEngine:
         strat = pred["strategy"]
 
         is_short = "做空" in strat
+        is_trend = "趨勢" in strat
+
+        # TP/SL 判定（與實盤 check_positions 一致）
         if is_short:
             if current_price <= tp:
                 return True
@@ -340,17 +343,14 @@ class LearningEngine:
             if current_price <= sl:
                 return False
 
-        # 15 分鐘後用方向 + 幅度判定
-        if age > 900:
-            pnl_pct = (current_price - entry) / entry if entry > 0 else 0
+        # 超時判定（對齊實盤 MAX_POSITION_AGE / MAX_TREND_POSITION_AGE）
+        timeout = 7 * 24 * 3600 if is_trend else 7200
+        if age >= timeout:
+            fee_cost = entry * 0.0015  # 對齊 BT_FEE_RATE
             if is_short:
-                pnl_pct = -pnl_pct  # 做空盈虧反轉
-
-            # 需要至少 0.1% 的明確方向才判定
-            if pnl_pct > 0.001:
-                return True
-            elif pnl_pct < -0.001:
-                return False
+                return (entry - current_price) > fee_cost
+            else:
+                return (current_price - entry) > fee_cost
 
         return None
 

@@ -654,7 +654,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
                 if trailing_sl_active:
                     breakeven_sl = entry_price * (1 - BT_BREAKEVEN_MARGIN)
                     if bar_price >= breakeven_sl:
-                        return True  # 保本出場（微利）
+                        return (entry_price - bar_price) > fee_cost  # 扣費後判定
                 if bar_price >= entry_price + sl_dist:
                     return False
                 if bar_price <= entry_price - tp_dist:
@@ -668,7 +668,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
                 if trailing_sl_active:
                     breakeven_sl = entry_price * (1 + BT_BREAKEVEN_MARGIN)
                     if bar_price <= breakeven_sl:
-                        return True  # 保本出場（微利）
+                        return (bar_price - entry_price) > fee_cost  # 扣費後判定
                 if bar_price <= entry_price - sl_dist:
                     return False
                 if bar_price >= entry_price + tp_dist:
@@ -830,7 +830,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         # 使用 ATR 乘數估算 avg_win/avg_loss 百分比
         tp_mult = ATR_TP_MULT.get(strat, 2.0)
         sl_mult = ATR_SL_MULT.get(strat, 1.5)
-        fee_pct = 0.2  # 0.1% 手續費 + 0.1% 滑點
+        fee_pct = 0.15  # 對齊 BT_FEE_RATE=0.0015（0.05% taker×2 + 0.05% slippage）
         wr_dec = adj_rate / 100.0
         _atr_est = atr_vals[-1] if atr_vals else closes[-1] * 0.02
         _atr_pct = _atr_est / closes[-1] * 100 if closes[-1] > 0 else 1.0
