@@ -585,7 +585,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
     # 預提取 high/low 用於更精確的回測
     bt_highs = [float(k.get('high', k.get('close', 0))) for k in klines]
     bt_lows = [float(k.get('low', k.get('close', 0))) for k in klines]
-    BT_FEE_RATE = 0.001  # 0.1% round-trip fee simulation
+    BT_FEE_RATE = 0.002  # 0.1% fee + 0.1% slippage round-trip
 
     # 抄底專用 hold_period（超賣反彈需要更長醞釀時間）
     chaodi_hold = 30
@@ -771,108 +771,62 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         is_long = base_strat in ("抄底", "追多")
 
         weight = learner.get_weight(symbol, base_strat)
-        regime_bonus = learner.get_regime_bonus(regime, base_strat)
 
-        # 信心係數：對數曲線，避免少量樣本膨脹（5→0.70, 10→1.0, 20→1.30, 50→1.5 cap）
-        confidence = min(math.log(s["total"] / 10.0 + 1) * 1.45, 1.5) if s["total"] >= MIN_SIG else 0
+        # === 貝葉斯收縮（取代舊 confidence 膨脹）===
+        # 少樣本時拉向 50%（無信息先驗），多樣本時保持觀測值
+        # adj_rate = 50 + (rate - 50) * n / (n + k)，k=20 為等效樣本數
+        BAYES_K = 20
+        n = s["total"]
+        adj_rate = 50.0 + (r - 50.0) * n / (n + BAYES_K) if n >= MIN_SIG else 50.0
 
-        # OBV 確認加成
-        obv_bonus = 1.0
-        if is_long and obv_dir == 1:
-            obv_bonus = 1.1  # 量能支持做多
-        elif is_short and obv_dir == -1:
-            obv_bonus = 1.1  # 量能支持做空
-        elif is_long and obv_dir == -1:
-            obv_bonus = 0.85  # 量價背離，降低信心
-        elif is_short and obv_dir == 1:
-            obv_bonus = 0.85
+        # === 期望值 EV（取代單純勝率）===
+        # EV = WR * avg_win_pct - (1-WR) * avg_loss_pct - fee
+        # 使用 ATR 乘數估算 avg_win/avg_loss 百分比
+        tp_mult = ATR_TP_MULT.get(strat, 2.0)
+        sl_mult = ATR_SL_MULT.get(strat, 1.5)
+        fee_pct = 0.2  # 0.1% 手續費 + 0.1% 滑點
+        wr_dec = adj_rate / 100.0
+        _atr_est = atr_vals[-1] if atr_vals else closes[-1] * 0.02
+        _atr_pct = _atr_est / closes[-1] * 100 if closes[-1] > 0 else 1.0
+        ev = wr_dec * tp_mult - (1 - wr_dec) * sl_mult - fee_pct / _atr_pct
 
-        # 近期表現加權
-        recent_acc, recent_n = learner.get_recent_accuracy(symbol, base_strat)
-        recent_bonus = 1.0
-        if recent_acc is not None and recent_n >= 3:
-            if recent_acc > 60:
-                recent_bonus = 1.1
-            elif recent_acc < 40:
-                recent_bonus = 0.9
+        # === 綜合分數：EV 驅動 + 輕量修正 ===
+        # 不再使用 regime_bonus / obv_bonus / env_multiplier 的連乘
+        # 只保留 weight（學習引擎回饋）和 global_penalty（全局勝率修正）
 
-        # === 環境因子（用加法混合，避免連乘壓縮） ===
-        env_adjustment = 0.0
-
-        # BTC 大盤（加強順逆盤影響）
-        if is_long and btc_trend == -1:
-            env_adjustment -= 0.15   # 逆大盤做多
-        elif is_short and btc_trend == 1:
-            env_adjustment -= 0.12   # 逆大盤做空
-        elif is_long and btc_trend == 1:
-            env_adjustment += 0.15   # 順大盤做多
-        elif is_short and btc_trend == -1:
-            env_adjustment += 0.15   # 順大盤做空
-
-        # 多時間框架確認
-        if is_long and htf_trend == 1:
-            env_adjustment += 0.12   # HTF 確認做多
-        elif is_short and htf_trend == -1:
-            env_adjustment += 0.12   # HTF 確認做空
-        elif is_long and htf_trend == -1:
-            env_adjustment -= 0.10   # HTF 反向
-        elif is_short and htf_trend == 1:
-            env_adjustment -= 0.10
-
-        # RSI 背離（適度加成，避免過度依賴）
-        if divergence == 1 and base_strat == "抄底":
-            env_adjustment += 0.12   # 看漲背離 + 抄底
-        elif divergence == -1 and is_short:
-            env_adjustment += 0.12   # 看跌背離 + 做空
-        elif divergence == 1 and is_short:
-            env_adjustment -= 0.12   # 看漲背離做空
-        elif divergence == -1 and is_long:
-            env_adjustment -= 0.12   # 看跌背離做多
-
-        # 支撐阻力位
-        current_price = closes[-1]
-        if support and base_strat == "抄底":
-            dist_to_support = abs(current_price - support) / current_price
-            if dist_to_support < 0.005:
-                env_adjustment += 0.10
-        if resistance and is_short:
-            dist_to_resistance = abs(current_price - resistance) / current_price
-            if dist_to_resistance < 0.005:
-                env_adjustment += 0.10
-
-        # 環境因子轉乘數：0 → 1.0，+0.3 → 1.3，-0.3 → 0.7
-        # 但限制在 0.7 ~ 1.4 之間（不會太極端）
-        env_multiplier = max(0.7, min(1.4, 1.0 + env_adjustment))
-
-        # 全局歷史勝率修正（策略級別的整體表現回饋）
+        # 全局歷史勝率修正
         global_wr, global_n = learner.get_global_strat_winrate(strat)
         global_penalty = 1.0
-        if global_wr is not None and global_n >= 20:
+        if global_wr is not None and global_n >= 30:
             if global_wr < 40:
-                global_penalty = 0.5   # 勝率 < 40%：嚴重懲罰
-            elif global_wr < 50:
-                global_penalty = 0.75  # 勝率 < 50%：中度懲罰
-            elif global_wr > 70:
-                global_penalty = 1.2   # 勝率 > 70%：獎勵
+                global_penalty = 0.6
+            elif global_wr < 45:
+                global_penalty = 0.8
 
-        # 勝率地板懲罰：勝率 < 50% 的策略大幅降權
-        winrate_floor = 0.5 if r < 50 else 1.0
+        # Ranging 收緊：ranging 下技術指標信噪比最低
+        regime_adj = 0.85 if regime == "ranging" else 1.0
 
-        # 綜合分數 = 基礎分(勝率×信心×學習權重) × 核心過濾(regime×obv×recent) × 環境因子 × 全局修正 × 勝率地板
-        base_score = r * confidence * weight
-        core_filter = regime_bonus * obv_bonus * recent_bonus
-        score = base_score * core_filter * env_multiplier * global_penalty * winrate_floor
+        # 最終分數 = adj_rate（貝葉斯校正勝率）× weight × global × regime_adj
+        score = adj_rate * weight * global_penalty * regime_adj
+
+        # 舊因子留作記錄但不參與計分
+        regime_bonus = learner.get_regime_bonus(regime, base_strat)
+        obv_bonus = 1.0
+        recent_bonus = 1.0
+        env_multiplier = 1.0
 
         strat_results[strat] = {
             "rate": r, "total": s["total"], "win": s["win"],
-            "confidence": round(confidence, 2),
+            "adj_rate": round(adj_rate, 1),
+            "ev": round(ev, 3),
+            "confidence": round(n / (n + BAYES_K), 2),  # 貝葉斯收縮係數（0~1）
             "weight": round(weight, 2),
             "regime_bonus": round(regime_bonus, 2),
             "obv_bonus": round(obv_bonus, 2),
             "recent_bonus": round(recent_bonus, 2),
             "env_multiplier": round(env_multiplier, 2),
             "global_penalty": round(global_penalty, 2),
-            "env_detail": f"btc/htf/div/sr={env_adjustment:+.2f}",
+            "env_detail": f"regime_adj={regime_adj}",
             "score": round(score, 1),
         }
 
@@ -965,6 +919,18 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
     current_atr = atr_vals[-1] if atr_vals else current_price * 0.02
     tp_dist = current_atr * ATR_TP_MULT[best_strat]
     sl_dist = current_atr * ATR_SL_MULT[best_strat]
+
+    # SL% 下限 1.5%、上限 15%（防止微型幣 ATR 過小被噪音掃損）
+    sl_pct_raw = sl_dist / current_price * 100 if current_price > 0 else 0
+    SL_FLOOR_PCT, SL_CAP_PCT = 1.5, 15.0
+    if sl_pct_raw < SL_FLOOR_PCT:
+        sl_dist = current_price * SL_FLOOR_PCT / 100
+    elif sl_pct_raw > SL_CAP_PCT:
+        sl_dist = current_price * SL_CAP_PCT / 100
+
+    # TP 也相應調整：保持原始 RR 比例
+    raw_rr = ATR_TP_MULT[best_strat] / ATR_SL_MULT[best_strat]
+    tp_dist = sl_dist * raw_rr
 
     if best_strat == "做空":
         tp_price = round(current_price - tp_dist, 6)
@@ -1313,6 +1279,16 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
     # TP/SL: ATR adaptive
     tp_dist = current_atr * ATR_TP_MULT[best_strat]
     sl_dist = current_atr * ATR_SL_MULT[best_strat]
+
+    # SL% 下限 1.5%、上限 15%
+    sl_pct_raw = sl_dist / current_price * 100 if current_price > 0 else 0
+    SL_FLOOR_PCT, SL_CAP_PCT = 1.5, 15.0
+    if sl_pct_raw < SL_FLOOR_PCT:
+        sl_dist = current_price * SL_FLOOR_PCT / 100
+    elif sl_pct_raw > SL_CAP_PCT:
+        sl_dist = current_price * SL_CAP_PCT / 100
+    raw_rr = ATR_TP_MULT[best_strat] / ATR_SL_MULT[best_strat]
+    tp_dist = sl_dist * raw_rr
 
     if best_strat == "趨勢做多":
         tp_price = round(current_price + tp_dist, 6)

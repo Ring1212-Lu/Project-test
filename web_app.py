@@ -337,6 +337,17 @@ def run_trading_bot(initial_balance=100):
                                     f"{size_usd}U qty={quantity} price={price}")
                     slippage = 0.001
                     entry_price = price * (1 + slippage) if side == "BUY" else price * (1 - slippage)
+
+                    # TP/SL 基於 entry_price 重算
+                    _tp_dist = abs(tr["tp"] - price)
+                    _sl_dist = abs(tr["sl"] - price)
+                    if side == "SELL":
+                        _recalc_tp = round(entry_price - _tp_dist, 6)
+                        _recalc_sl = round(entry_price + _sl_dist, 6)
+                    else:
+                        _recalc_tp = round(entry_price + _tp_dist, 6)
+                        _recalc_sl = round(entry_price - _sl_dist, 6)
+
                     pos = {
                         "id": f"trend_{int(time.time()*1000)}",
                         "symbol": tr["symbol"],
@@ -344,15 +355,15 @@ def run_trading_bot(initial_balance=100):
                         "strategy": strat,
                         "strategy_type": "trend",
                         "entry_price": entry_price,
-                        "tp_price": tr["tp"],
-                        "sl_price": tr["sl"],
+                        "tp_price": _recalc_tp,
+                        "sl_price": _recalc_sl,
                         "size": size_usd,
                         "quantity": quantity,
                         "score": tr["best_score"],
                         "signal_strength": tr.get("signal_strength", "WEAK"),
                         "atr": tr.get("atr", 0),
                         "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "trailing_sl": tr["sl"],
+                        "trailing_sl": _recalc_sl,
                     }
                     trend_signal = {**tr, "strategy_type": "trend"}
                     ok, reason = risk_mgr.try_open_position(trend_signal, pos)
@@ -430,14 +441,25 @@ def run_trading_bot(initial_balance=100):
             add_trading_log(f"{sym_short}: 嘗試開倉 {strat}({side}) {size_usd}U({pct}%) qty={quantity}")
             slippage = 0.001
             entry_price = price * (1 + slippage) if side == "BUY" else price * (1 - slippage)
+
+            # TP/SL 基於 entry_price 重算（原始距離已含 SL floor/ceiling）
+            tp_dist = abs(r["tp"] - price)
+            sl_dist = abs(r["sl"] - price)
+            if side == "SELL":
+                recalc_tp = round(entry_price - tp_dist, 6)
+                recalc_sl = round(entry_price + sl_dist, 6)
+            else:
+                recalc_tp = round(entry_price + tp_dist, 6)
+                recalc_sl = round(entry_price - sl_dist, 6)
+
             pos = {
                 "id": f"pos_{int(time.time()*1000)}",
                 "symbol": r["symbol"],
                 "side": side,
                 "strategy": strat,
                 "entry_price": entry_price,
-                "tp_price": r["tp"],
-                "sl_price": r["sl"],
+                "tp_price": recalc_tp,
+                "sl_price": recalc_sl,
                 "size": size_usd,
                 "quantity": quantity,
                 "score": r["best_score"],
