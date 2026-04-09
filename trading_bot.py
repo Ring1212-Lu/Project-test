@@ -77,7 +77,7 @@ class RiskManager:
         self.max_trend_positions = config.get("max_trend_positions", 3)  # 趨勢最大同時持倉
         self.max_consecutive_loss = config.get("max_consecutive_loss", 3)
         self.min_signal_strength = config.get("min_signal_strength", "MEDIUM")
-        self.min_score = config.get("min_score", 80)
+        self.min_score = config.get("min_score", 45)  # 配合簡化後的評分公式（舊 80 基於膨脹公式）
         self.min_win_rate = config.get("min_win_rate", 55)
         self.min_rr = config.get("min_rr", 1.3)
 
@@ -721,7 +721,7 @@ def main():
         "max_positions": args.max_positions,
         "max_consecutive_loss": 3,
         "min_signal_strength": args.min_signal,
-        "min_score": 80,
+        "min_score": 45,
         "min_win_rate": 55,
         "min_rr": 1.3,
     }

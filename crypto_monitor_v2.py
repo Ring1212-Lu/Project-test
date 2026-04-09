@@ -874,10 +874,9 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         weight = learner.get_weight(symbol, base_strat)
 
         # === 貝葉斯收縮（取代舊 confidence 膨脹）===
-        # 少樣本時拉向先驗，多樣本時保持觀測值
-        # 抄底先驗 42%（1M 抄底基準率低於 50%），其他策略 50%
+        # 少樣本時拉向 50%（無信息先驗），多樣本時保持觀測值
         BAYES_K = 20
-        BAYES_PRIOR = 42.0 if base_strat == "抄底" else 50.0
+        BAYES_PRIOR = 50.0
         n = s["total"]
         adj_rate = BAYES_PRIOR + (r - BAYES_PRIOR) * n / (n + BAYES_K) if n >= MIN_SIG else BAYES_PRIOR
 
@@ -1083,11 +1082,12 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
     relaxed_detail = (f"做空{sr_short_r['rate']}%({sr_short_r['total']}) | "
                       f"抄底{sr_bottom_r['rate']}%({sr_bottom_r['total']})")
 
-    # 信號強度等級
+    # 信號強度等級（配合簡化後的評分公式：score ≈ adj_rate × weight × regime_adj）
+    # 舊門檻 80/120 是基於有 regime_bonus 膨脹的舊公式，新公式最高約 60-70
     score_val = best["score"]
-    if score_val >= 120:
+    if score_val >= 65:
         signal_strength = "STRONG"
-    elif score_val >= 80:
+    elif score_val >= 45:
         signal_strength = "MEDIUM"
     else:
         signal_strength = "WEAK"
@@ -1468,9 +1468,10 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
     rr = round(tp_dist / sl_dist, 2) if sl_dist > 0 else 0
 
     # Signal strength
-    if best_score >= 120:
+    # 信號強度等級（配合簡化後的評分公式）
+    if best_score >= 65:
         signal_strength = "STRONG"
-    elif best_score >= 80:
+    elif best_score >= 45:
         signal_strength = "MEDIUM"
     else:
         signal_strength = "WEAK"
