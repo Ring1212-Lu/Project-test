@@ -566,7 +566,7 @@ class LearningEngine:
             self.data["optimized_params"] = {
                 "rsi_short_thresh": 70,
                 "rsi_long_thresh": 35,
-                "best_hold_period": 15,
+                "best_hold_period": 75,  # 75 bars × 60s = 75min（對齊 crypto_monitor_v2 預設值）
                 "last_optimized": None,
                 "optimization_count": 0,
                 "history": [],  # 歷次優化記錄
@@ -704,5 +704,5 @@ class LearningEngine:
         return self.data.get("optimized_params", {
             "rsi_short_thresh": 70,
             "rsi_long_thresh": 35,
-            "best_hold_period": 15,
+            "best_hold_period": 75,  # 對齊 crypto_monitor_v2 預設值
         })

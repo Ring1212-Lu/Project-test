@@ -1013,13 +1013,15 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         # BB lower touch
         if bb_lower and bb_lower[-1] > 0 and closes[-1] <= bb_lower[-1] * 1.005:
             rt_chaodi_score += 2
-        # RSI divergence (use same 20-bar window)
+        # RSI divergence（對齊回測：使用 _find_local_minima，非 half-window split）
         if len(closes) >= 21 and len(rsi_vals) >= 21:
             _lc = closes[-21:]
             _lr = rsi_vals[-21:]
-            _m = 10
-            if min(_lc[_m:]) < min(_lc[:_m]) and min(_lr[_m:]) > min(_lr[:_m]):
-                rt_chaodi_score += 3
+            _lows = _find_local_minima(_lc, order=3)
+            if len(_lows) >= 2:
+                _i1, _i2 = _lows[-2], _lows[-1]
+                if _lc[_i2] < _lc[_i1] and _lr[_i2] > _lr[_i1]:
+                    rt_chaodi_score += 3
         # Volume spike
         if len(volumes) >= 21 and volumes[-1] > mean(volumes[-21:-1]) * 1.5:
             rt_chaodi_score += 1
