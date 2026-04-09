@@ -615,11 +615,11 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
     # 使用優化參數（如果有的話）
     rsi_short_th = 70
     rsi_long_th = 35
-    hold_period = 15
+    hold_period = 75  # 75 bars × 60s = 75min（舊 15×300s 的等效時間）
     if opt_params:
         rsi_short_th = opt_params.get("rsi_short_thresh", 70)
         rsi_long_th = opt_params.get("rsi_long_thresh", 35)
-        hold_period = opt_params.get("best_hold_period", 15)
+        hold_period = opt_params.get("best_hold_period", 75)
 
     # 統計計數
     stats = {
@@ -641,7 +641,8 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
     BT_BREAKEVEN_MARGIN = 0.003  # 保本止損 margin（對齊實盤 0.3%）
 
     # 抄底專用 hold_period（超賣反彈需要更長醞釀時間）
-    chaodi_hold = 30
+    # 120 bars × 60s = 7200s = BT_MAX_AGE，對齊實盤 2h timeout
+    chaodi_hold = 120
 
     def _bt_check_win(strat_name, entry_price, bar_start, is_short_side):
         """回測 TP/SL 判定（對齊實盤邏輯：close 取樣、超時、保本止損、SL floor）"""
@@ -813,9 +814,9 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         if _avg_vol > 0 and vol > _avg_vol * 1.5:
             chaodi_score += 1
 
-        # (7) Pump-dump 過濾：60根內最高價/當前價 < 1.2（抓暴漲後回落）
+        # (7) Pump-dump 過濾：60根內最高價/當前價 < 1.35（掃描池為大波動幣，門檻適度放寬）
         _peak_60 = max(closes[max(0, ci - 60):ci + 1])
-        _not_post_pump = (_peak_60 / price) < 1.2 if price > 0 else True
+        _not_post_pump = (_peak_60 / price) < 1.35 if price > 0 else True
 
         # (8) 連跌保護（≥4 根不抄底）
         _bt_consec = 0
@@ -957,10 +958,10 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         blocked = False
         block_reason = ""
 
-        # (A) Pump-dump 過濾：24h 漲幅 > 15% 的幣不抄底
-        if change24h > 15:
+        # (A) Pump-dump 過濾：24h 漲幅 > 25% 的幣不抄底（掃描池為漲跌幅前15%，門檻需配合）
+        if change24h > 25:
             blocked = True
-            block_reason = f"24h漲幅{change24h:+.1f}%，趨勢性上漲中不抄底"
+            block_reason = f"24h漲幅{change24h:+.1f}%，爆漲中不抄底"
         # (B) 連跌 ≥4 根：賣壓未竭
         if not blocked and consec_down >= 4:
             blocked = True
@@ -971,10 +972,10 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
             if current_rsi_check >= 25:
                 blocked = True
                 block_reason = f"trending_down + RSI={current_rsi_check:.1f}≥25，超賣不夠深"
-        # (D) 5M 趨勢仍向上 → 回調非超賣（htf_trend 已在 fetch_and_analyze 計算）
-        if not blocked and htf_trend == 1:
+        # (D) 5M 趨勢向上 + 大漲 → 非超賣結構（中等漲幅+5M上漲=正常回調可抄底）
+        if not blocked and htf_trend == 1 and change24h > 20:
             blocked = True
-            block_reason = "5分鐘趨勢仍向上（htf_trend=1），回調非超賣結構"
+            block_reason = f"5M趨勢向上+24h漲{change24h:+.1f}%，強勢上漲中非超賣"
         # (E) 15M 布林帶位置：必須在 15M 中軌下方才允許抄底
         if not blocked and htf_bb_pos is not None:
             if htf_bb_pos == "above_mid":
