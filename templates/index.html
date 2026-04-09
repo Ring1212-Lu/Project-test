@@ -1155,7 +1155,7 @@ function updateBotUI(data) {
     if (positions.length > 0) {
         posHTML += `<div style="font-size:12px;color:#8b949e;margin-bottom:6px;letter-spacing:0.5px">持倉中</div>
         <table class="bot-table"><thead><tr>
-            <th>幣種</th><th>方向</th><th>策略</th><th>進場價</th><th>止盈</th><th>止損</th><th>倉位</th><th>分數</th><th>開倉時間</th>
+            <th>幣種</th><th>方向</th><th>策略</th><th>進場價</th><th>現價</th><th>損益</th><th>止盈</th><th>止損</th><th>倉位</th><th>分數</th><th>開倉時間</th>
         </tr></thead><tbody>`;
         positions.forEach(p => {
             const sideColor = p.side === 'BUY' ? '#3fb950' : '#f85149';
@@ -1163,11 +1163,19 @@ function updateBotUI(data) {
             const typeTag = isTrend
                 ? '<span style="font-size:9px;background:rgba(56,139,253,0.15);color:#388bfd;padding:1px 4px;border-radius:3px;margin-left:4px">趨勢</span>'
                 : '<span style="font-size:9px;background:rgba(240,136,62,0.15);color:#f0883e;padding:1px 4px;border-radius:3px;margin-left:4px">短線</span>';
+            const hasPnl = p.unrealized_pnl !== undefined && p.unrealized_pnl !== null;
+            const pnl = hasPnl ? p.unrealized_pnl : 0;
+            const pnlPct = hasPnl ? p.unrealized_pnl_pct : 0;
+            const pnlColor = pnl >= 0 ? '#3fb950' : '#f85149';
+            const pnlSign = pnl >= 0 ? '+' : '';
+            const curPrice = p.current_price != null ? p.current_price : '-';
             posHTML += `<tr>
                 <td style="font-weight:600;color:#58a6ff">${(p.symbol||'').replace('_USDT_PERP','')}</td>
                 <td style="color:${sideColor}">${p.side}</td>
                 <td>${p.strategy}${typeTag}</td>
                 <td>${p.entry_price}</td>
+                <td>${curPrice}</td>
+                <td style="color:${pnlColor};font-weight:600">${hasPnl ? pnlSign + pnl.toFixed(4) + 'U (' + pnlSign + pnlPct.toFixed(2) + '%)' : '-'}</td>
                 <td style="color:#3fb950">${p.tp_price}</td>
                 <td style="color:#f85149">${p.sl_price}</td>
                 <td>${p.size}U</td>

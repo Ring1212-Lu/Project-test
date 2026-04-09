@@ -981,6 +981,7 @@ def api_learning():
 @app.route("/api/trading")
 def api_trading():
     """交易機器人狀態 API"""
+    # 先在 lock 內快照狀態，再釋放 lock 後做價格查詢（避免 HTTP 阻塞交易鎖）
     with trading_lock:
         if not trading_state["enabled"]:
             # 嘗試從 trade_log.json 讀取
@@ -1001,15 +1002,50 @@ def api_trading():
                     pass
             return jsonify({"enabled": False, "status": {}, "open_positions": [], "closed_trades": [], "logs": []})
 
-        return jsonify({
-            "enabled": True,
-            "source": "live",
-            "round": trading_state["round"],
-            "status": trading_state["status"],
-            "open_positions": trading_state["open_positions"],
-            "closed_trades": trading_state["closed_trades"],
-            "logs": trading_state["logs"][-50:],
-        })
+        # 快照（淺拷貝列表，不持鎖做 HTTP）
+        snap_round = trading_state["round"]
+        snap_status = trading_state["status"]
+        snap_positions = list(trading_state["open_positions"])
+        snap_closed = list(trading_state["closed_trades"])
+        snap_logs = list(trading_state["logs"][-50:])
+
+    # lock 已釋放，安全呼叫可能觸發 HTTP 的 get_shared_tickers()
+    try:
+        tickers = get_shared_tickers()
+        price_map = {t["symbol"]: float(t["close"]) for t in tickers if t.get("close")}
+    except Exception:
+        price_map = {}
+
+    enriched_positions = []
+    FEE_RATE = 0.0005
+    for p in snap_positions:
+        ep = dict(p)
+        sym = ep.get("symbol", "")
+        cur = price_map.get(sym)
+        if cur and ep.get("entry_price"):
+            entry = float(ep["entry_price"])
+            size = float(ep.get("size", 0))
+            fee = size * FEE_RATE * 2
+            if ep.get("side") == "SELL":
+                pnl = (entry - cur) / entry * size - fee if entry else 0
+                pnl_pct = (entry - cur) / entry * 100 if entry else 0
+            else:
+                pnl = (cur - entry) / entry * size - fee if entry else 0
+                pnl_pct = (cur - entry) / entry * 100 if entry else 0
+            ep["current_price"] = cur
+            ep["unrealized_pnl"] = round(pnl, 4)
+            ep["unrealized_pnl_pct"] = round(pnl_pct, 2)
+        enriched_positions.append(ep)
+
+    return jsonify({
+        "enabled": True,
+        "source": "live",
+        "round": snap_round,
+        "status": snap_status,
+        "open_positions": enriched_positions,
+        "closed_trades": snap_closed,
+        "logs": snap_logs,
+    })
 
 
 @app.route("/api/trading/start", methods=["POST"])
