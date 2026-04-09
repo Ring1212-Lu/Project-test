@@ -169,6 +169,14 @@ class RiskManager:
             if len(short_positions) >= self.max_positions:
                 return False, f"短線持倉數已達上限 {self.max_positions}"
 
+        # 總曝險檢查：所有持倉 size 合計不超過帳戶餘額的 80%
+        MAX_TOTAL_EXPOSURE_PCT = 80
+        total_exposure = sum(p.get("size", 0) for p in self.open_positions)
+        if self.current_balance > 0:
+            exposure_pct = total_exposure / self.current_balance * 100
+            if exposure_pct >= MAX_TOTAL_EXPOSURE_PCT:
+                return False, f"總曝險 {exposure_pct:.0f}% >= {MAX_TOTAL_EXPOSURE_PCT}%"
+
         dynamic_min_score = self._get_dynamic_min_score()
 
         strength = signal.get("signal_strength", "WEAK")
@@ -420,10 +428,11 @@ def check_positions(risk_mgr, client):
                 reason = "SL"
 
         if should_close:
-            # 防止雙重平倉：確認倉位仍存在
+            # 原子化摘取：在鎖內移除倉位（claim），避免雙重平倉競態
             with risk_mgr._lock:
                 if pos["id"] not in {p["id"] for p in risk_mgr.open_positions}:
-                    continue
+                    continue  # 已被其他執行緒摘取
+                risk_mgr.open_positions = [p for p in risk_mgr.open_positions if p["id"] != pos["id"]]
 
             # 計算 PnL (subtract round-trip fees)
             fee = size * FEE_RATE * 2
@@ -431,6 +440,14 @@ def check_positions(risk_mgr, client):
                 pnl = (entry - current) / entry * size - fee
             else:
                 pnl = (current - entry) / entry * size - fee
+
+            # 計算持倉時間
+            age_str = "?"
+            if opened_at_str:
+                try:
+                    age_str = f"{age_seconds/3600:.1f}h"
+                except (NameError, UnboundLocalError):
+                    age_str = "?"
 
             # 平倉
             close_side = "BUY" if side == "SELL" else "SELL"
@@ -442,14 +459,14 @@ def check_positions(risk_mgr, client):
                 pnl_str = f"+{pnl:.4f}" if pnl >= 0 else f"{pnl:.4f}"
                 pnl_color = 'green' if pnl >= 0 else 'red'
 
-                print(color(f"\n{tag} [CLOSE] {sym_short} {reason} | PnL: {pnl_str}U ({pnl_pct:+.2f}%)", pnl_color))
+                print(color(f"\n{tag} [CLOSE] {sym_short} {reason} | PnL: {pnl_str}U ({pnl_pct:+.2f}%) | 持倉: {age_str}", pnl_color))
                 print(f"   策略: {pos.get('strategy','')} | 方向: {side} | "
-                      f"進場: {entry} → 出場: {current} | TP:{tp} SL:{sl}")
-                if is_trend:
-                    age_str = f"{age_seconds/3600:.1f}h" if opened_at_str else "?"
-                    print(f"   持倉時間: {age_str} | 手續費: {fee:.4f}U")
+                      f"進場: {entry} → 出場: {current} | TP:{tp} SL:{sl} | 手續費: {fee:.4f}U")
                 save_trade_log(risk_mgr)
             else:
+                # 下單失敗：回滾，把倉位放回去下輪重試
+                with risk_mgr._lock:
+                    risk_mgr.open_positions.append(pos)
                 print(color(f"\n{tag} [CLOSE FAILED] {sym_short} 平倉下單失敗，保留倉位下輪重試: {result}", 'red'))
         else:
             # 持倉監控摘要（每次檢查都記錄，方便追蹤）
@@ -600,6 +617,7 @@ def run_trading_loop(client, risk_mgr, learner):
                 "quantity": 0,  # updated after calc
                 "score": r["best_score"],
                 "signal_strength": r["signal_strength"],
+                "chaodi_score": r.get("chaodi_score"),
                 "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
 

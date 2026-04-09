@@ -541,7 +541,7 @@ def get_htf_bb_position(symbol):
         return "below_mid"
 
 
-def fetch_and_analyze(coin, learner, opt_params=None, btc_trend=0):
+def fetch_and_analyze(coin, learner, opt_params=None, btc_trend=0, log_fn=None):
     """單一幣種：抓取 + 分析（供並行使用）"""
     sym = coin["symbol"]
     klines = fetch_klines(sym)
@@ -555,7 +555,8 @@ def fetch_and_analyze(coin, learner, opt_params=None, btc_trend=0):
     realtime_price = coin.get("price", None)
     return analyze(sym, klines, round(coin["change"], 2), learner, opt_params,
                    btc_trend=btc_trend, htf_trend=htf_trend,
-                   realtime_price=realtime_price, htf_bb_pos=htf_bb_pos)
+                   realtime_price=realtime_price, htf_bb_pos=htf_bb_pos,
+                   log_fn=log_fn)
 
 
 # ============================================================
@@ -563,7 +564,9 @@ def fetch_and_analyze(coin, learner, opt_params=None, btc_trend=0):
 # ============================================================
 
 def analyze(symbol, klines, change24h, learner, opt_params=None,
-            btc_trend=0, htf_trend=0, realtime_price=None, htf_bb_pos=None):
+            btc_trend=0, htf_trend=0, realtime_price=None, htf_bb_pos=None,
+            log_fn=None):
+    _log = log_fn if log_fn else print
     closes = [float(k['close']) for k in klines if float(k.get('close', 0)) > 0]
     if len(closes) < 60:
         return None
@@ -945,7 +948,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
     # === 做多策略即時安全檢查 ===
     # 下跌趨勢中所有做多策略（抄底、追多）都應被攔截
     if best_strat == "追多" and regime == "trending_down":
-        print(f"  [BLOCK] {symbol}: 追多被攔截 — 市場處於下跌趨勢，不適合做多")
+        _log(f"  [BLOCK] {symbol}: 追多被攔截 — 市場處於下跌趨勢，不適合做多")
         valid.pop("追多", None)
         if not valid:
             return None
@@ -989,7 +992,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
                 block_reason = f"近60根高點回撤{drawdown_pct:.1f}%+24h漲{change24h:+.1f}%，暴漲回落形態"
 
         if blocked:
-            print(f"  [BLOCK] {symbol}: 抄底被攔截 — {block_reason}")
+            _log(f"  [BLOCK] {symbol}: 抄底被攔截 — {block_reason}")
             # 移除抄底，嘗試用次佳策略
             valid.pop("抄底", None)
             if not valid:
@@ -1182,12 +1185,14 @@ def fetch_trend_candidates(tickers, min_volume=10_000_000):
     return candidates[:20]  # Top 20 by volume
 
 
-def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=None):
+def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=None,
+                   log_fn=None):
     """
     趨勢策略分析（4H 定向 + 1H 入場確認）
     策略：趨勢做多 / 趨勢做空
     持倉期：3-7天（18根4H K線 ≈ 3天）
     """
+    _log = log_fn if log_fn else print
     closes = [float(k['close']) for k in klines_4h if float(k.get('close', 0)) > 0]
     if len(closes) < 60:
         return None
@@ -1441,8 +1446,8 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
                 # 1H 拒絕入場 → 降級為 WAIT（仍顯示訊號，但標記不適合立即入場）
                 if entry_timing == "1H_REJECT":
                     entry_timing = "1H_WAIT"
-                    print(f"  [趨勢] {symbol}: 4H方向通過但1H入場時機不佳 "
-                          f"(dist_ema20={dist_to_ema20*100:+.1f}%, RSI_1h={rsi_1h_val:.1f}) → 顯示但標記等待")
+                    _log(f"  [趨勢] {symbol}: 4H方向通過但1H入場時機不佳 "
+                         f"(dist_ema20={dist_to_ema20*100:+.1f}%, RSI_1h={rsi_1h_val:.1f}) → 顯示但標記等待")
 
     # TP/SL: ATR adaptive
     tp_dist = current_atr * ATR_TP_MULT[best_strat]

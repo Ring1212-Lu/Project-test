@@ -182,8 +182,18 @@ def _check_positions(risk_mgr, client):
             strat = pos.get("strategy", "")
             tag = "趨勢" if pos.get("strategy_type") == "trend" else "短線"
             pnl_str = f"+{pnl:.4f}" if pnl >= 0 else f"{pnl:.4f}"
-            add_trading_log(f"[{tag}] CLOSE {sym_short} {strat} | PnL: {pnl_str}U | "
-                            f"進場:{pos.get('entry_price',0)} 出場:{pos.get('closed_at','')}")
+            # 計算持倉時間
+            hold_str = ""
+            opened_at_str = pos.get("opened_at", "")
+            if opened_at_str:
+                try:
+                    opened_time = datetime.strptime(opened_at_str, "%Y-%m-%d %H:%M:%S")
+                    hold_sec = (datetime.now() - opened_time).total_seconds()
+                    hold_str = f" | 持倉:{hold_sec/3600:.1f}h"
+                except (ValueError, TypeError):
+                    pass
+            add_trading_log(f"[{tag}] CLOSE {sym_short} {strat} | PnL: {pnl_str}U{hold_str} | "
+                            f"進場:{pos.get('entry_price',0)}")
             if pnl < 0:
                 _symbol_cooldown[pos["symbol"]] = time.time() + COOLDOWN_SECONDS
                 add_trading_log(f"[COOLDOWN] {sym_short} 冷卻 {COOLDOWN_SECONDS}s（止損後）")
@@ -535,6 +545,7 @@ def run_background_scan():
     consecutive_errors = 0
 
     while True:
+        scan_start_time = time.time()
         try:
             round_num += 1
             print(f"[SCAN] === 第 {round_num} 輪掃描開始 ===")
@@ -627,7 +638,7 @@ def run_background_scan():
             results = []
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 future_map = {
-                    executor.submit(fetch_and_analyze, coin, learner, None, btc_trend): coin
+                    executor.submit(fetch_and_analyze, coin, learner, None, btc_trend, log_fn=add_log): coin
                     for coin in pool
                 }
                 for future in as_completed(future_map):
@@ -738,7 +749,8 @@ def run_background_scan():
                         coin = data["coin"]
                         if klines_4h and len(klines_4h) >= 60:
                             tres = analyze_trend(coin["symbol"], klines_4h, coin["change"],
-                                                 learner, btc_trend, klines_1h=klines_1h)
+                                                 learner, btc_trend, klines_1h=klines_1h,
+                                                 log_fn=add_log)
                             if tres:
                                 trend_results.append(tres)
                     trend_results.sort(key=lambda x: x["best_score"], reverse=True)
@@ -822,7 +834,10 @@ def run_background_scan():
                 consecutive_errors = 0
                 continue
 
-        time.sleep(SCAN_INTERVAL)
+        # 扣除掃描耗時，避免實際間隔漂移
+        elapsed = time.time() - scan_start_time
+        remaining = max(0, SCAN_INTERVAL - elapsed)
+        time.sleep(remaining)
 
 
 # ===== Flask Routes =====
@@ -865,6 +880,7 @@ def api_state():
                     "relaxed_detail": r.get("relaxed_detail", ""),
                     "env_multiplier": r.get("env_multiplier", 1.0),
                     "global_penalty": r.get("global_penalty", 1.0),
+                    "ev": r.get("ev", 0),
                     "tp": r.get("tp", 0),
                     "sl": r.get("sl", 0),
                     "rr": r.get("rr", 0),
@@ -895,6 +911,7 @@ def api_state():
                     "best_total": r["best_total"],
                     "best_score": r["best_score"],
                     "signal_strength": r.get("signal_strength", "WEAK"),
+                    "ev": r.get("ev", 0),
                     "tp": r.get("tp", 0),
                     "sl": r.get("sl", 0),
                     "rr": r.get("rr", 0),
