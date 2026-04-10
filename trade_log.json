@@ -1,9 +1,9 @@
 {
-  "last_updated": "2026-04-10 11:30:56",
+  "last_updated": "2026-04-11 00:55:13",
   "status": {
     "balance": 103.5,
-    "daily_pnl": 1.52,
-    "daily_pnl_pct": 1.5,
+    "daily_pnl": 0,
+    "daily_pnl_pct": 0.0,
     "total_pnl": 3.5,
     "total_pnl_pct": 3.5,
     "open_positions": 1,
