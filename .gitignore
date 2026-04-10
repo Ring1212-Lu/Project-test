@@ -3,3 +3,4 @@ __pycache__/
 learning_data.json
 trade_log.json
 .env
+*.bak_*
