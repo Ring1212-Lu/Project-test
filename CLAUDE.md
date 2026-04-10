@@ -35,6 +35,15 @@ When making code changes (optimization, bug fix, new feature), follow this proto
 5. Include verification summary in commit message
 
 ### Available Slash Commands:
-- `/audit` — Full REVIEW_CHECKLIST.md 4-Agent parallel audit (35 items)
-- `/verify` — 4-Agent verification of recent changes
+- `/audit` — **主 Claude 直接**依照 REVIEW_CHECKLIST.md 逐項檢查並修改（不派子 Agent），完成後自動觸發 `/verify`
+- `/verify` — 派遣 4 位 Opus 領域專家 Agent 驗證最近的修改
 - `/quick-review [topic]` — Quick 4-Agent cross-review of a specific change
+
+### /audit 執行規範（主 Claude 直接操作）
+1. 讀取 `REVIEW_CHECKLIST.md` 全部類別
+2. 主 Claude 用 Read / Grep 逐項檢查 crypto_monitor_v2.py / trading_bot.py / web_app.py / learning_engine.py / backtest.py
+3. 對每項輸出 PASS / FAIL / WARN + file:line + 建議
+4. 依 CRITICAL → NON-BLOCKING 優先級修改
+5. 每個修改後 py_compile 驗證
+6. Commit + push 後自動觸發 `/verify` 的 4 位領域專家驗證
+7. 若 /verify 有 REJECT，自動回到步驟 4 修復循環
