@@ -815,6 +815,9 @@ def main():
                     break
 
     risk_mgr = RiskManager(balance, risk_config)
+    # Phase 4 fix: 載入持久化狀態（halt / consecutive_losses / daily_pnl / closed_trades）
+    # 舊版 standalone bot 重啟時會遺失 C.8.2 儲存的 halt 狀態，只有 web_app 呼叫過 load_trade_log。
+    load_trade_log(risk_mgr)
     learner = LearningEngine(LEARNING_FILE)
 
     print(color(f"\n  機器人啟動！按 Ctrl+C 停止\n", 'green'))
