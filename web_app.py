@@ -229,7 +229,7 @@ def run_trading_bot(initial_balance=100):
         "max_consecutive_loss": 3,
         "min_signal_strength": "MEDIUM",
         "min_score": 45,
-        "min_win_rate": 55,
+        "min_win_rate": 50,  # 對 adj_rate 的門檻；貝葉斯先驗 50
         "min_rr": 1.3,
     }
     risk_mgr = RiskManager(initial_balance, risk_config)
@@ -384,9 +384,10 @@ def run_trading_bot(initial_balance=100):
                         continue
                     order_result = client.place_order(tr["symbol"], side, "MARKET", quantity)
                     if order_result.get("result") or order_result.get("paper_mode"):
+                        # 用 post-slippage 的 entry/tp/sl 給 learner（與短線 path 一致）
                         learner.record_prediction(
                             symbol=tr["symbol"], strategy=strat,
-                            entry_price=price, tp_price=tr["tp"], sl_price=tr["sl"],
+                            entry_price=entry_price, tp_price=_recalc_tp, sl_price=_recalc_sl,
                             rate=tr["best_rate"], score=tr["best_score"],
                             regime=tr.get("regime", "unknown"),
                             ttl=72 * 3600, atr=tr.get("atr", 0),
@@ -488,9 +489,11 @@ def run_trading_bot(initial_balance=100):
             order_result = client.place_order(r["symbol"], side, "MARKET", quantity)
 
             if order_result.get("result") or order_result.get("paper_mode"):
+                # 用 post-slippage 的 entry/tp/sl 給 learner，確保學習驗證與實盤 fill 對齊
+                # 舊版傳 pre-slippage 的 price/r["tp"]/r["sl"]，樂觀約 0.1%/trade
                 learner.record_prediction(
                     symbol=r["symbol"], strategy=strat,
-                    entry_price=price, tp_price=r["tp"], sl_price=r["sl"],
+                    entry_price=entry_price, tp_price=recalc_tp, sl_price=recalc_sl,
                     rate=r["best_rate"], score=r["best_score"], regime=r["regime"],
                     atr=r.get("atr", 0),
                 )
@@ -1017,7 +1020,8 @@ def api_trading():
         price_map = {}
 
     enriched_positions = []
-    FEE_RATE = 0.0005
+    # 0.15% 完整 round-trip fee (含 slippage)，與 trading_bot.FEE_RATE 一致
+    FEE_RATE = 0.0015
     for p in snap_positions:
         ep = dict(p)
         sym = ep.get("symbol", "")
@@ -1025,7 +1029,7 @@ def api_trading():
         if cur and ep.get("entry_price"):
             entry = float(ep["entry_price"])
             size = float(ep.get("size", 0))
-            fee = size * FEE_RATE * 2
+            fee = size * FEE_RATE
             if ep.get("side") == "SELL":
                 pnl = (entry - cur) / entry * size - fee if entry else 0
                 pnl_pct = (entry - cur) / entry * 100 if entry else 0

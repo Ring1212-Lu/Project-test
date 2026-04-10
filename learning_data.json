@@ -1,344 +1,344 @@
 {
   "weights": {
     "ARIA_USDT_PERP:做空(寬)": {
-      "value": 0.216,
-      "updated": 1775829257.127091
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ARIA_USDT_PERP:抄底(寬)": {
-      "value": 0.2277,
-      "updated": 1775829257.127108
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "MAGMA_USDT_PERP:做空(寬)": {
-      "value": 0.2,
-      "updated": 1775839960.4214308
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ENJ_USDT_PERP:抄底(寬)": {
-      "value": 0.556,
-      "updated": 1775755125.9746313
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "TNSR_USDT_PERP:追多": {
-      "value": 0.6318,
-      "updated": 1775795091.6267931
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "TNSR_USDT_PERP:抄底(寬)": {
-      "value": 0.2,
-      "updated": 1775795091.6268253
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "TNSR_USDT_PERP:做空(寬)": {
-      "value": 0.2333,
-      "updated": 1775795316.6148086
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "RAVE_USDT_PERP:做空(寬)": {
-      "value": 0.2,
-      "updated": 1775839870.4332724
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "RAVE_USDT_PERP:抄底(寬)": {
-      "value": 0.3828,
-      "updated": 1775837260.3965251
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "MAGMA_USDT_PERP:做空": {
-      "value": 0.6164,
-      "updated": 1775828221.521953
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "FUN_USDT_PERP:做空(寬)": {
-      "value": 0.216,
-      "updated": 1775801257.2759826
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "FUN_USDT_PERP:抄底(寬)": {
-      "value": 0.2,
-      "updated": 1775801257.2759693
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "RAVE_USDT_PERP:追多": {
-      "value": 0.5312,
-      "updated": 1775837395.3965864
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "MAGMA_USDT_PERP:抄底(寬)": {
-      "value": 0.216,
-      "updated": 1775839420.442611
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "MAGMA_USDT_PERP:追多": {
-      "value": 0.4792,
-      "updated": 1775796666.7899654
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "AGT_USDT_PERP:抄底(寬)": {
-      "value": 0.2,
-      "updated": 1775799277.2759728
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ENJ_USDT_PERP:做空(寬)": {
-      "value": 0.7754,
-      "updated": 1775750626.0490675
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "BLUR_USDT_PERP:做空(寬)": {
-      "value": 0.9271,
-      "updated": 1775753865.8404834
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "AGT_USDT_PERP:做空(寬)": {
-      "value": 0.2053,
-      "updated": 1775797611.646086
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "AGT_USDT_PERP:做空": {
-      "value": 0.7949,
-      "updated": 1775794146.5953734
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "AGT_USDT_PERP:追多": {
-      "value": 0.4306,
-      "updated": 1775796216.7155344
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ENJ_USDT_PERP:追多": {
-      "value": 0.9504,
-      "updated": 1775755170.864553
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "BLUR_USDT_PERP:抄底(寬)": {
-      "value": 0.6477,
-      "updated": 1775755395.8635826
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "TNSR_USDT_PERP:做空": {
-      "value": 0.6815,
-      "updated": 1775761269.5878243
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "RAVE_USDT_PERP:做空": {
-      "value": 0.4644,
-      "updated": 1775824936.4183242
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ENJ_USDT_PERP:做空": {
-      "value": 0.8364,
-      "updated": 1775751256.0051858
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ARIA_USDT_PERP:追多": {
-      "value": 0.4892,
-      "updated": 1775825836.4412022
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "LAB_USDT_PERP:做空(寬)": {
-      "value": 0.334,
-      "updated": 1775839375.4156468
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "LAB_USDT_PERP:做空": {
-      "value": 0.8585,
-      "updated": 1775836630.3976994
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "LAB_USDT_PERP:抄底(寬)": {
-      "value": 0.36,
-      "updated": 1775838475.5724533
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "BLUR_USDT_PERP:做空": {
-      "value": 1.1664,
-      "updated": 1775755350.8583608
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "NOM_USDT_PERP:做空(寬)": {
-      "value": 1.0028,
-      "updated": 1775803551.7356317
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "NOM_USDT_PERP:抄底(寬)": {
-      "value": 0.3087,
-      "updated": 1775803821.7179148
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "NOM_USDT_PERP:追多": {
-      "value": 0.6156,
-      "updated": 1775801886.7310326
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "NOM_USDT_PERP:做空": {
-      "value": 0.8364,
-      "updated": 1775766354.878361
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "FUN_USDT_PERP:做空": {
-      "value": 0.6815,
-      "updated": 1775760009.5802002
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ARIA_USDT_PERP:做空": {
-      "value": 0.6164,
-      "updated": 1775830651.5824604
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "AKE_USDT_PERP:做空": {
-      "value": 0.6995,
-      "updated": 1775831596.5092723
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "AKE_USDT_PERP:做空(寬)": {
-      "value": 0.2,
-      "updated": 1775840095.4177284
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "AKE_USDT_PERP:抄底(寬)": {
-      "value": 0.3271,
-      "updated": 1775840095.4176989
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "BLUR_USDT_PERP:抄底": {
-      "value": 0.88,
-      "updated": 1775755395.8635373
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "AKE_USDT_PERP:追多": {
-      "value": 0.5438,
-      "updated": 1775837935.3953636
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "SIREN_USDT_PERP:做空": {
-      "value": 0.9504,
-      "updated": 1775764959.6602397
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "SIREN_USDT_PERP:做空(寬)": {
-      "value": 1.0536,
-      "updated": 1775766309.650051
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "SIREN_USDT_PERP:抄底(寬)": {
-      "value": 0.6994,
-      "updated": 1775770810.310543
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "SIREN_USDT_PERP:追多": {
-      "value": 0.736,
-      "updated": 1775763249.5891025
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ZEC_USDT_PERP:趨勢做多": {
-      "value": 1.08,
-      "updated": 1775759334.6876972
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "FUN_USDT_PERP:追多": {
-      "value": 0.7744,
-      "updated": 1775786676.5362527
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "BAS_USDT_PERP:做空(寬)": {
-      "value": 0.2872,
-      "updated": 1775831416.8101943
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "BAS_USDT_PERP:抄底(寬)": {
-      "value": 0.216,
-      "updated": 1775833891.529285
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "BAS_USDT_PERP:追多": {
-      "value": 0.2789,
-      "updated": 1775815846.3227205
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "NAORIS_USDT_PERP:追多": {
-      "value": 0.7744,
-      "updated": 1775764284.6111295
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "NAORIS_USDT_PERP:做空(寬)": {
-      "value": 1.1664,
-      "updated": 1775764284.6111667
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "NAORIS_USDT_PERP:抄底(寬)": {
-      "value": 0.7744,
-      "updated": 1775764284.611193
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "PARTI_USDT_PERP:抄底": {
-      "value": 0.6318,
-      "updated": 1775832046.727642
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "PARTI_USDT_PERP:抄底(寬)": {
-      "value": 0.2943,
-      "updated": 1775838790.7932088
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "PARTI_USDT_PERP:追多": {
-      "value": 0.4195,
-      "updated": 1775839735.457545
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "FUN_USDT_PERP:抄底": {
-      "value": 0.8364,
-      "updated": 1775801886.7309763
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "PARTI_USDT_PERP:做空(寬)": {
-      "value": 0.2,
-      "updated": 1775839150.9352427
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "TAO_USDT_PERP:趨勢做多": {
-      "value": 0.88,
-      "updated": 1775779294.8861315
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ARIA_USDT_PERP:抄底": {
-      "value": 1.0535,
-      "updated": 1775816476.3390212
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "PARTI_USDT_PERP:做空": {
-      "value": 0.7949,
-      "updated": 1775827051.4544315
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "BAS_USDT_PERP:做空": {
-      "value": 0.5849,
-      "updated": 1775817196.6392887
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "CFG_USDT_PERP:做空(寬)": {
-      "value": 0.9033,
-      "updated": 1775798961.689909
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "CFG_USDT_PERP:抄底(寬)": {
-      "value": 0.8364,
-      "updated": 1775798961.6899786
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "CFG_USDT_PERP:追多": {
-      "value": 0.88,
-      "updated": 1775798871.8150315
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "LAB_USDT_PERP:追多": {
-      "value": 0.5417,
-      "updated": 1775838475.5724404
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "DASH_USDT_PERP:做空(寬)": {
-      "value": 0.3014,
-      "updated": 1775838295.4225504
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "DASH_USDT_PERP:抄底(寬)": {
-      "value": 0.3426,
-      "updated": 1775839600.6163416
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "DASH_USDT_PERP:追多": {
-      "value": 0.6824,
-      "updated": 1775838295.4225261
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ILV_USDT_PERP:做空(寬)": {
-      "value": 0.7763,
-      "updated": 1775839150.935197
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ILV_USDT_PERP:做空": {
-      "value": 0.9756,
-      "updated": 1775839195.7008567
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ILV_USDT_PERP:追多": {
-      "value": 0.5416,
-      "updated": 1775838070.3796148
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "ILV_USDT_PERP:抄底(寬)": {
-      "value": 0.5416,
-      "updated": 1775839105.408832
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "BULLA_USDT_PERP:追多": {
-      "value": 0.736,
-      "updated": 1775839825.7272458
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "BULLA_USDT_PERP:做空(寬)": {
-      "value": 0.6995,
-      "updated": 1775839870.4332044
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "BULLA_USDT_PERP:抄底(寬)": {
-      "value": 0.736,
-      "updated": 1775839915.7558172
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "TRADOOR_USDT_PERP:抄底": {
-      "value": 1.08,
-      "updated": 1775830606.4977326
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "TRADOOR_USDT_PERP:做空(寬)": {
-      "value": 0.88,
-      "updated": 1775830606.4977524
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "TRADOOR_USDT_PERP:抄底(寬)": {
-      "value": 1.08,
-      "updated": 1775830606.4977708
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "LPT_USDT_PERP:做空(寬)": {
-      "value": 0.9504,
-      "updated": 1775833711.5276012
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "LPT_USDT_PERP:抄底(寬)": {
-      "value": 0.88,
-      "updated": 1775833891.5294006
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "LPT_USDT_PERP:做空": {
-      "value": 1.08,
-      "updated": 1775834026.5418162
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "DASH_USDT_PERP:做空": {
-      "value": 0.8364,
-      "updated": 1775838295.4224553
+      "value": 1.0,
+      "updated": 1775842417.8681612
     },
     "BULLA_USDT_PERP:抄底": {
-      "value": 0.7744,
-      "updated": 1775839870.433311
+      "value": 1.0,
+      "updated": 1775842417.8681612
     }
   },
   "pending": [

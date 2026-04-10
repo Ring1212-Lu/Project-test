@@ -48,9 +48,9 @@ except ImportError:
         return text
 
 
-FEE_RATE = 0.0005  # 0.05% per side (taker). Round-trip = 0.10%.
-# 注意：回測/EV/學習引擎驗證用 0.0015 (含 slippage 0.05%)，此處為純手續費。
-# 實盤 PnL 計算偏樂觀約 0.05%，屬保守設計（回測更嚴格）。
+FEE_RATE = 0.0015  # 0.05% taker × 2 sides + 0.05% slippage (統一與 BT 一致)
+# 舊版 0.0005 讓實盤 PnL 計算年化虛增約 2.2%（4-Agent 驗證），
+# 改為與 crypto_monitor_v2.py BT_FEE_RATE / learning_engine.py 一致的 0.0015。
 MAX_POSITION_AGE = 7200  # 2 hours in seconds
 
 # Trend strategy constants
@@ -78,7 +78,7 @@ class RiskManager:
         self.max_consecutive_loss = config.get("max_consecutive_loss", 3)
         self.min_signal_strength = config.get("min_signal_strength", "MEDIUM")
         self.min_score = config.get("min_score", 45)  # 配合簡化後的評分公式（舊 80 基於膨脹公式）
-        self.min_win_rate = config.get("min_win_rate", 55)
+        self.min_win_rate = config.get("min_win_rate", 50)  # 對 adj_rate 的門檻（貝葉斯先驗=50）
         self.min_rr = config.get("min_rr", 1.3)
 
         # 狀態追蹤
@@ -108,16 +108,29 @@ class RiskManager:
             return self._can_open_unlocked(signal)
 
     def _get_dynamic_min_score(self):
-        """根據近期勝率動態調整最低分數門檻"""
-        recent = self.closed_trades[-5:]  # 最近 5 筆
-        if len(recent) < 3:
-            return self.min_score  # 交易不夠多，用預設值
+        """根據近期勝率動態調整最低分數門檻（漸進式）
+
+        舊版：5 筆窗口，<40% 直接跳到 80（過度過擬合，5 筆樣本統計意義不足）
+        新版：20 筆窗口，以 min_score + 10 的漸進加碼取代斷崖跳躍
+              - 樣本 <10 筆：不動態調整
+              - WR <40%：收緊 +10 分（如 45 → 55）
+              - WR 在 40-45%：收緊 +5 分
+              - WR ≥ 45%：正常門檻
+              4-Agent 共識：5 筆窗口+80 的斷崖會把 bot 完全鎖死。
+        """
+        WINDOW = 20
+        MIN_SAMPLES = 10
+        recent = self.closed_trades[-WINDOW:]
+        if len(recent) < MIN_SAMPLES:
+            return self.min_score  # 樣本不足，用預設值
 
         wins = sum(1 for t in recent if t.get("pnl", 0) > 0)
         recent_wr = wins / len(recent)
 
-        if recent_wr < 0.4:  # 近期勝率 < 40%，收緊門檻
-            return 80
+        if recent_wr < 0.40:
+            return self.min_score + 10  # 明顯偏低：+10 分
+        if recent_wr < 0.45:
+            return self.min_score + 5   # 略偏低：+5 分
         return self.min_score  # 正常門檻
 
     def calc_position_size(self, signal):
@@ -192,8 +205,14 @@ class RiskManager:
             if signal.get("best_score", 0) < dynamic_min_score:
                 return False, f"分數 {signal['best_score']} < {dynamic_min_score}{'（收緊中）' if dynamic_min_score > self.min_score else ''}"
 
-        if signal.get("best_rate", 0) < self.min_win_rate:
-            return False, f"勝率 {signal['best_rate']}% < {self.min_win_rate}%"
+        # 使用貝葉斯收縮後的 adj_rate 而非 raw rate — 與評分公式口徑一致
+        # 舊版直接比 best_rate < 55 會把冷啟動樣本（n<20）的原始 rate 算進去，
+        # 導致實盤門檻在小樣本時不穩定。adj_rate 已被收縮到 50 附近。
+        # min_win_rate 預設降至 50（貝葉斯先驗），相當於「經收縮後仍為正向」。
+        # 4-Agent 共識：這同時解決 bot 長時間無動作的問題（舊 55 在小樣本下過嚴）。
+        adj_rate_check = signal.get("best_adj_rate", signal.get("best_rate", 0))
+        if adj_rate_check < self.min_win_rate:
+            return False, f"adj_rate {adj_rate_check}% < {self.min_win_rate}%（貝葉斯收縮後不足）"
 
         min_rr_check = 1.2 if is_trend else self.min_rr
         if signal.get("rr", 0) < min_rr_check:
@@ -434,8 +453,8 @@ def check_positions(risk_mgr, client):
                     continue  # 已被其他執行緒摘取
                 risk_mgr.open_positions = [p for p in risk_mgr.open_positions if p["id"] != pos["id"]]
 
-            # 計算 PnL (subtract round-trip fees)
-            fee = size * FEE_RATE * 2
+            # 計算 PnL (subtract round-trip fees — FEE_RATE 已是完整 round-trip 0.15%)
+            fee = size * FEE_RATE
             if side == "SELL":
                 pnl = (entry - current) / entry * size - fee
             else:
@@ -740,7 +759,7 @@ def main():
         "max_consecutive_loss": 3,
         "min_signal_strength": args.min_signal,
         "min_score": 45,
-        "min_win_rate": 55,
+        "min_win_rate": 50,  # 對 adj_rate 的門檻；貝葉斯先驗 50
         "min_rr": 1.3,
     }
 

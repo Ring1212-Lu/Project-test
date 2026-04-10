@@ -657,10 +657,12 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         else:
             atr_val = atr_for_bt[atr_idx]
 
-        # Fee-adjusted TP/SL distances
-        fee_cost = entry_price * BT_FEE_RATE
-        tp_dist = atr_val * tp_mult - fee_cost
-        sl_dist = atr_val * sl_mult + fee_cost
+        # TP/SL distances（對齊實盤 crypto_monitor_v2.py:L1039-1040 的裸 atr*mult
+        # 不在此預扣 fee —— fee 在最終 PnL 判定時統一扣除，避免 BT/Live misalignment
+        # 4-Agent 驗證：舊版 BT 的 fee-adjusted 造成 rate 65-70 段虛高 3-5pp）
+        fee_cost = entry_price * BT_FEE_RATE  # 保留供 hit 判定時的閾值檢查使用
+        tp_dist = atr_val * tp_mult
+        sl_dist = atr_val * sl_mult
 
         # SL floor/cap（對齊實盤 SL% 1.5%-15%）
         sl_pct = sl_dist / entry_price * 100 if entry_price > 0 else 0
@@ -1135,6 +1137,7 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         # 最佳策略
         "best_strat":     best_strat,
         "best_rate":      best["rate"],
+        "best_adj_rate":  best["adj_rate"],  # 貝葉斯收縮後的勝率（給實盤門檻用）
         "best_total":     best["total"],
         "best_score":     best["score"],
         "confidence":     best["confidence"],
@@ -1250,9 +1253,11 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
         strat_name = "趨勢做空" if is_short else "趨勢做多"
         tp_mult = ATR_TP_MULT[strat_name]
         sl_mult = ATR_SL_MULT[strat_name]
-        fee_cost = price_i * TREND_BT_FEE_RATE
-        tp_dist = atr_i * tp_mult - fee_cost
-        sl_dist = atr_i * sl_mult + fee_cost
+        # TP/SL distances（對齊實盤趨勢掃描的裸 atr*mult）
+        # 不預扣 fee，改為在最終 PnL 判定扣除（與短線 BT 一致）
+        fee_cost = price_i * TREND_BT_FEE_RATE  # 保留供 hit 判定時閾值檢查
+        tp_dist = atr_i * tp_mult
+        sl_dist = atr_i * sl_mult
 
         # SL floor/cap（對齊實盤 1.5%-15%）
         sl_pct = sl_dist / price_i * 100 if price_i > 0 else 0
@@ -1353,6 +1358,7 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
     best_strat = None
     best_score = 0
     best_rate_val = 0
+    best_adj_rate_val = 50.0  # 貝葉斯收縮後勝率（給實盤門檻用）
     best_total = 0
     best_ev = 0
 
@@ -1401,6 +1407,7 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
             best_score = score
             best_strat = strat
             best_rate_val = r
+            best_adj_rate_val = round(adj_rate, 1)
             best_total = s["total"]
             best_ev = round(ev, 3)
 
@@ -1501,6 +1508,7 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
         # 最佳策略
         "best_strat":     best_strat,
         "best_rate":      best_rate_val,
+        "best_adj_rate":  best_adj_rate_val,  # 貝葉斯收縮後勝率（給實盤門檻用）
         "best_total":     best_total,
         "best_score":     round(best_score, 1),
         "signal_strength": signal_strength,

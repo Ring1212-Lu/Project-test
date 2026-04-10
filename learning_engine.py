@@ -63,9 +63,13 @@ class MarketRegime:
 class LearningEngine:
     """自我學習引擎 v2：追蹤預測 → 驗證結果 → 動態調整權重"""
 
-    # 權重更新參數
-    WIN_MULTIPLIER  = 1.08   # 預測正確時的權重提升（加大獎勵）
-    LOSE_MULTIPLIER = 0.88   # 預測錯誤時的權重衰減（加大懲罰）
+    # 權重更新參數（幾何對稱 — 避免在 WR<50% 的系統產生單向漂移）
+    # 舊版 WIN=1.08 / LOSE=0.88 的幾何 break-even = 62.4% WR，
+    # 在實際 40.7% WR 下每筆期望 E[log weight]=-0.038，
+    # 連續 100 筆使 weight 必然漂向 MIN=0.2（4-Agent 共識）。
+    # 對稱版 1.12 / 0.893 = 1/1.12，期望值為 0，分辨力更強。
+    WIN_MULTIPLIER  = 1.12   # 預測正確時的權重提升（加大獎勵）
+    LOSE_MULTIPLIER = 1.0 / 1.12   # = 0.8929，與 WIN 幾何對稱
     MAX_WEIGHT      = 2.5    # 權重上限
     MIN_WEIGHT      = 0.2    # 權重下限
     DEFAULT_WEIGHT  = 1.0    # 初始權重
