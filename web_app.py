@@ -870,6 +870,7 @@ def api_state():
                     "obv_dir": r.get("obv_dir", 0),
                     "best_strat": r["best_strat"],
                     "best_rate": r["best_rate"],
+                    "best_adj_rate": r.get("best_adj_rate", r["best_rate"]),  # 實盤門檻用的貝葉斯收縮勝率
                     "best_total": r["best_total"],
                     "best_score": r["best_score"],
                     "confidence": r.get("confidence", "N/A"),
@@ -911,6 +912,7 @@ def api_state():
                     "vol_above_avg": r.get("vol_above_avg", False),
                     "best_strat": r["best_strat"],
                     "best_rate": r["best_rate"],
+                    "best_adj_rate": r.get("best_adj_rate", r["best_rate"]),  # 實盤門檻用的貝葉斯收縮勝率
                     "best_total": r["best_total"],
                     "best_score": r["best_score"],
                     "signal_strength": r.get("signal_strength", "WEAK"),
