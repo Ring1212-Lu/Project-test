@@ -30,8 +30,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pionex_client import PionexClient
 from crypto_monitor_v2 import (
-    fetch_tickers, fetch_klines, fetch_and_analyze, get_btc_trend,
-    calc_rsi_wilder, calc_ema,
+    fetch_tickers, fetch_and_analyze, get_btc_trend,
     TOP15_PCT, TOP15_MAX, TOP_N, INTERVAL, MAX_WORKERS,
 )
 from learning_engine import LearningEngine
@@ -260,6 +259,7 @@ class RiskManager:
 
         return {
             "balance": round(self.current_balance, 2),
+            "daily_start_balance": round(self.daily_start_balance, 2),  # C.8.2: 熔斷狀態恢復用
             "daily_pnl": round(self.daily_pnl, 2),
             "daily_pnl_pct": round(daily_pnl_pct, 1),
             "total_pnl": round(total_pnl, 2),
@@ -280,7 +280,12 @@ class RiskManager:
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_log.json")
 
 def load_trade_log(risk_mgr):
-    """啟動時從 trade_log.json 恢復未平倉位"""
+    """啟動時從 trade_log.json 恢復未平倉位 + 熔斷狀態
+
+    Fix C.8.2 (/audit): 舊版只恢復 open_positions / closed_trades / balance，
+    遺漏 consecutive_losses / halted / halt_reason / daily_pnl / today，
+    導致觸發每日虧損或 3 連虧停機後重啟會靜默繞過熔斷繼續交易。
+    """
     if not os.path.exists(LOG_FILE):
         return 0
     try:
@@ -296,12 +301,29 @@ def load_trade_log(risk_mgr):
         closed = data.get("closed_trades", [])
         if closed:
             risk_mgr.closed_trades = closed
-            wins = sum(1 for t in closed if t.get("pnl", 0) > 0)
-        # 恢復餘額
+        # 恢復餘額 — 用 `in` 判斷避免 balance=0 被 falsy 忽略
         saved_status = data.get("status", {})
-        if saved_status.get("balance"):
+        if "balance" in saved_status:
             risk_mgr.current_balance = saved_status["balance"]
             risk_mgr.daily_start_balance = saved_status["balance"]
+        # 恢復熔斷狀態：同日重啟必須保留，跨日由 new_day_check 處理
+        saved_today = data.get("today")  # ISO date string or None
+        today_str = date.today().isoformat()
+        if saved_today == today_str:
+            # 同日重啟 — 恢復全部熔斷狀態
+            risk_mgr.consecutive_losses = saved_status.get("consecutive_losses", 0)
+            risk_mgr.halted = bool(saved_status.get("halted", False))
+            risk_mgr.halt_reason = saved_status.get("halt_reason", "")
+            risk_mgr.daily_pnl = saved_status.get("daily_pnl", 0)
+            # daily_start_balance 回推：current_balance - daily_pnl
+            if "daily_start_balance" in saved_status:
+                risk_mgr.daily_start_balance = saved_status["daily_start_balance"]
+            if risk_mgr.halted:
+                print(color(f"[RISK] 恢復熔斷狀態: {risk_mgr.halt_reason}", 'yellow'))
+        else:
+            # 跨日重啟 — 連續虧損保留（跨日累計），每日量重置
+            risk_mgr.consecutive_losses = saved_status.get("consecutive_losses", 0)
+            # halted/daily_pnl 由 new_day_check 自然解除
         return restored
     except Exception as e:
         print(color(f"[RISK] 載入交易記錄失敗: {e}", 'yellow'))
@@ -312,6 +334,7 @@ def save_trade_log(risk_mgr):
     """儲存交易記錄"""
     data = {
         "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "today": risk_mgr.today.isoformat(),  # C.8.2: 用於同日重啟判斷
         "status": risk_mgr.get_status(),
         "open_positions": risk_mgr.open_positions,
         "closed_trades": risk_mgr.closed_trades[-200:],  # 最多保留 200 筆
@@ -610,8 +633,9 @@ def run_trading_loop(client, risk_mgr, learner):
         for r in results[:TOP_N]:
             sym_short = r['symbol'].replace('_USDT_PERP', '')
 
-            # 安全過濾：24h 跌幅超過 15% 不做追多
-            if r["best_strat"] in ("追多", "抄底") and r.get("change24h", 0) < -15:
+            # 安全過濾：24h 跌幅超過 15% 不做任何 BUY 策略（含寬鬆抄底）
+            BUY_CRASH_RISK = {"追多", "抄底", "抄底(寬)"}
+            if r["best_strat"] in BUY_CRASH_RISK and r.get("change24h", 0) < -15:
                 print(f"  {sym_short}: SKIP (24h跌{r['change24h']:.1f}%，暴跌中不做多)")
                 continue
 
@@ -661,22 +685,39 @@ def run_trading_loop(client, risk_mgr, learner):
                     risk_mgr.open_positions = [p for p in risk_mgr.open_positions if p["id"] != pos["id"]]
                 continue
 
-            # 更新 pos 的 size/quantity
+            # D.10.3 fix: post-slippage entry/tp/sl 與 web_app.py 一致
+            # 舊版傳 pre-slippage 的 price/r["tp"]/r["sl"] 給 learner，
+            # 會讓學習驗證樂觀約 0.1%/trade，與實盤 fill 不一致。
+            slippage = 0.001
+            entry_price = price * (1 + slippage) if side == "BUY" else price * (1 - slippage)
+            tp_dist = abs(r["tp"] - price)
+            sl_dist = abs(r["sl"] - price)
+            if side == "SELL":
+                recalc_tp = round(entry_price - tp_dist, 6)
+                recalc_sl = round(entry_price + sl_dist, 6)
+            else:
+                recalc_tp = round(entry_price + tp_dist, 6)
+                recalc_sl = round(entry_price - sl_dist, 6)
+
+            # 更新 pos 的 size/quantity + post-slippage 價格
             pos["size"] = size_usd
             pos["quantity"] = quantity
+            pos["entry_price"] = entry_price
+            pos["tp_price"] = recalc_tp
+            pos["sl_price"] = recalc_sl
 
             # 下單
             print(color(f"\n[OPEN] {r['symbol']} | {strat} ({side}) | "
                         f"{size_usd}U ({pct:.1f}%) | Score: {r['best_score']}", 'green'))
-            print(f"   Price: {price} | TP: {r['tp']} | SL: {r['sl']} | RR: 1:{r['rr']}")
+            print(f"   Price: {price} | TP: {recalc_tp} | SL: {recalc_sl} | RR: 1:{r['rr']}")
 
             order_result = client.place_order(r["symbol"], side, "MARKET", quantity)
 
             if order_result.get("result") or order_result.get("paper_mode"):
-                # 記錄學習預測
+                # 記錄學習預測（post-slippage，與 web_app.py 一致）
                 learner.record_prediction(
                     symbol=r["symbol"], strategy=strat,
-                    entry_price=price, tp_price=r["tp"], sl_price=r["sl"],
+                    entry_price=entry_price, tp_price=recalc_tp, sl_price=recalc_sl,
                     rate=r["best_rate"], score=r["best_score"],
                     regime=r["regime"],
                 )

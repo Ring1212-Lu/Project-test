@@ -444,9 +444,12 @@ def fetch_klines(symbol, interval="1M", limit=500):
     binance_interval = interval.lower()
 
     try:
+        # B.4.6 fix: scale timeout with payload size
+        # (connect=5s, read = 8 + limit*0.02 → 500 bars ≈ 18s, 100 bars ≈ 10s, 30 bars ≈ 8.6s)
+        read_timeout = 8 + limit * 0.02
         r = _throttled_get(BASE_URL, params={
             "symbol": binance_sym, "interval": binance_interval, "limit": limit
-        }, timeout=15)
+        }, timeout=(5, read_timeout))
         if r.status_code == 200:
             raw = r.json()
             if isinstance(raw, list) and len(raw) >= 30:
@@ -647,11 +650,16 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
     # 120 bars × 60s = 7200s = BT_MAX_AGE，對齊實盤 2h timeout
     chaodi_hold = 120
 
+    # D.10.7 fix: atr_offset 動態取值，對齊 trend BT (L1341-1342) 的做法
+    # 舊版 hardcoded `bar_start - 14` 在 calc_atr 初始實作變動時會悄悄錯位，
+    # 改用 len(klines)-len(atr_for_bt) 確保 ATR index 永遠對齊 klines。
+    atr_offset = len(klines) - len(atr_for_bt)
+
     def _bt_check_win(strat_name, entry_price, bar_start, is_short_side):
         """回測 TP/SL 判定（對齊實盤邏輯：close 取樣、超時、保本止損、SL floor）"""
         tp_mult = ATR_TP_MULT.get(strat_name, 2.0)
         sl_mult = ATR_SL_MULT.get(strat_name, 1.5)
-        atr_idx = bar_start - 14
+        atr_idx = bar_start - atr_offset
         if atr_idx < 0 or atr_idx >= len(atr_for_bt):
             atr_val = entry_price * 0.02
         else:

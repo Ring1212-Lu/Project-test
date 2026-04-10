@@ -20,6 +20,7 @@ from flask import Flask, render_template, jsonify, request
 from crypto_monitor_v2 import (
     fetch_tickers, fetch_klines, fetch_and_analyze, get_btc_trend,
     fetch_trend_candidates, analyze_trend,
+    calc_ema, calc_rsi_wilder,  # B.4.5: 4H 預檢指標
     TOP15_PCT, TOP15_MAX, TOP_N, MAX_WORKERS
 )
 from learning_engine import LearningEngine
@@ -168,12 +169,14 @@ def add_trading_log(msg):
 
 def _check_positions(risk_mgr, client):
     """Check positions with cooldown tracking for stop-losses"""
-    # Snapshot open positions before check
-    before_ids = {p["id"]: p for p in list(risk_mgr.open_positions)}
+    # A.1.3 fix: snapshot under lock to avoid RuntimeError during concurrent mutation
+    with risk_mgr._lock:
+        before_ids = {p["id"]: dict(p) for p in risk_mgr.open_positions}
     n_positions = len(before_ids)
     check_positions(risk_mgr, client)
-    # Detect closed positions
-    after_ids = {p["id"] for p in risk_mgr.open_positions}
+    # Detect closed positions — snapshot under lock
+    with risk_mgr._lock:
+        after_ids = {p["id"] for p in risk_mgr.open_positions}
     for pid, pos in before_ids.items():
         if pid not in after_ids:
             # Position was closed — log details
@@ -203,9 +206,12 @@ def run_position_checker(risk_mgr, client):
     """自適應間隔檢查持倉 TP/SL（有短線 30s，僅趨勢 300s，無倉 60s）"""
     while True:
         try:
-            if risk_mgr.open_positions:
+            # A.1.3 fix: snapshot under lock
+            with risk_mgr._lock:
+                has_positions = bool(risk_mgr.open_positions)
+                has_short = any(p.get("strategy_type") != "trend" for p in risk_mgr.open_positions) if has_positions else False
+            if has_positions:
                 _check_positions(risk_mgr, client)
-                has_short = any(p.get("strategy_type") != "trend" for p in risk_mgr.open_positions)
                 interval = 30 if has_short else 300
             else:
                 interval = 60
@@ -292,8 +298,9 @@ def run_trading_bot(initial_balance=100):
         btc_str = {1: "UP", -1: "DOWN", 0: "NEUTRAL"}.get(btc_trend, "?")
         add_trading_log(f"BTC: {btc_str} | 信號年齡: {int(scan_age)}s")
 
-        # 排除已持倉的幣種
-        held_symbols = {p["symbol"] for p in risk_mgr.open_positions}
+        # 排除已持倉的幣種（A.1.3 fix: snapshot under lock）
+        with risk_mgr._lock:
+            held_symbols = {p["symbol"] for p in risk_mgr.open_positions}
         results = [r for r in results if r["symbol"] not in held_symbols]
 
         add_trading_log(f"[短線] 讀取監控信號 {len(results)} 個（排除已持倉 {len(held_symbols)}）")
@@ -424,8 +431,9 @@ def run_trading_bot(initial_balance=100):
         for r in results[:TOP_N]:
             sym_short = r['symbol'].replace('_USDT_PERP', '')
 
-            # 安全過濾：24h 跌幅超過 15% 不做追多
-            if r["best_strat"] in ("追多", "抄底") and r.get("change24h", 0) < -15:
+            # 安全過濾：24h 跌幅超過 15% 不做任何 BUY 策略（含寬鬆抄底）
+            BUY_CRASH_RISK = {"追多", "抄底", "抄底(寬)"}
+            if r["best_strat"] in BUY_CRASH_RISK and r.get("change24h", 0) < -15:
                 add_trading_log(f"{sym_short}: SKIP (24h跌{r['change24h']:.1f}%，暴跌中不做多)")
                 continue
 
@@ -515,8 +523,10 @@ def run_trading_bot(initial_balance=100):
         learner.save()
 
         status = risk_mgr.get_status()
-        short_pos = sum(1 for p in risk_mgr.open_positions if p.get("strategy_type") != "trend")
-        trend_pos = sum(1 for p in risk_mgr.open_positions if p.get("strategy_type") == "trend")
+        # A.1.3 fix: snapshot under lock
+        with risk_mgr._lock:
+            short_pos = sum(1 for p in risk_mgr.open_positions if p.get("strategy_type") != "trend")
+            trend_pos = sum(1 for p in risk_mgr.open_positions if p.get("strategy_type") == "trend")
         add_trading_log(f"Balance: {status['balance']}U | "
                         f"持倉: 短線{short_pos}/趨勢{trend_pos} | "
                         f"Today: {status['daily_pnl']:+.2f}U | "
@@ -527,10 +537,16 @@ def run_trading_bot(initial_balance=100):
 
 def _update_trading_state(risk_mgr):
     """將風控狀態同步到全域 trading_state"""
+    # A.1.3 fix: snapshot lists under risk_mgr._lock BEFORE acquiring trading_lock
+    # (lock ordering: risk_mgr._lock → trading_lock, never the reverse)
+    with risk_mgr._lock:
+        status = risk_mgr.get_status()
+        open_snapshot = list(risk_mgr.open_positions)
+        closed_snapshot = list(risk_mgr.closed_trades[-50:])
     with trading_lock:
-        trading_state["status"] = risk_mgr.get_status()
-        trading_state["open_positions"] = list(risk_mgr.open_positions)
-        trading_state["closed_trades"] = list(risk_mgr.closed_trades[-50:])
+        trading_state["status"] = status
+        trading_state["open_positions"] = open_snapshot
+        trading_state["closed_trades"] = closed_snapshot
 
 
 # 監控掃描控制
@@ -635,8 +651,8 @@ def run_background_scan():
                 add_log(f"[趨勢] 4H K 線閉合觸發（UTC {utc_now.strftime('%H:%M')}）")
             is_trend_round = (round_num == 1 or round_num % TREND_EVERY_N == 0) or is_4h_candle_close
 
-            # ── 短線���描（1M K線，每輪都跑）──
-            add_log(f"[短線] 並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒��...")
+            # ── 短線掃描（1M K線，每輪都跑）──
+            add_log(f"[短線] 並行分析 {len(pool)} 個幣種（{MAX_WORKERS} 執行緒）...")
             t_start = time.time()
             results = []
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -662,7 +678,7 @@ def run_background_scan():
                 # Discord 通知強訊號
                 notify_strong_signals(top)
 
-                # 記錄���測（嚴格版）
+                # 記錄預測（嚴格版）
                 for r in top:
                     learner.record_prediction(
                         symbol=r["symbol"],
@@ -722,46 +738,70 @@ def run_background_scan():
                 try:
                     trend_candidates = fetch_trend_candidates(tickers)
                     trend_results = []
-                    # Phase 1: 並行抓取 4H + 1H K線
-                    klines_map = {}  # symbol -> {"4h": [...], "1h": [...]}
+
+                    # B.4.5 fix: 兩階段抓取
+                    # Phase 1: 只抓 4H（所有候選）
+                    klines_4h_map = {}  # symbol -> (coin, klines_4h)
                     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                        futures_4h = {
-                            executor.submit(fetch_klines, c["symbol"], "4h", 300): ("4h", c)
+                        futs_4h = {
+                            executor.submit(fetch_klines, c["symbol"], "4h", 300): c
                             for c in trend_candidates
                         }
-                        futures_1h = {
-                            executor.submit(fetch_klines, c["symbol"], "1h", 100): ("1h", c)
-                            for c in trend_candidates
-                        }
-                        all_futures = {**futures_4h, **futures_1h}
-                    # executor 已關閉，所有 futures 完成後再收集（避免併發寫入）
-                    for future, (tf, coin) in {**futures_4h, **futures_1h}.items():
+                    for fut, coin in futs_4h.items():
                         try:
-                            kdata = future.result()
-                            sym = coin["symbol"]
-                            if sym not in klines_map:
-                                klines_map[sym] = {"coin": coin, "4h": None, "1h": None}
-                            klines_map[sym][tf] = kdata
+                            klines_4h_map[coin["symbol"]] = (coin, fut.result())
                         except Exception:
                             pass
 
-                    # Phase 2: 分析（4H 定向 + 1H 入場確認）
-                    for sym, data in klines_map.items():
-                        klines_4h = data["4h"]
-                        klines_1h = data["1h"]
-                        coin = data["coin"]
-                        if klines_4h and len(klines_4h) >= 60:
-                            tres = analyze_trend(coin["symbol"], klines_4h, coin["change"],
-                                                 learner, btc_trend, klines_1h=klines_1h,
-                                                 log_fn=add_log)
-                            if tres:
-                                trend_results.append(tres)
+                    # Phase 1.5: 用 4H 做便宜定向預檢（EMA20/EMA50/RSI 同 analyze_trend 的最終過濾器）
+                    survivors = []  # [(coin, klines_4h), ...]
+                    for sym, (coin, k4h) in klines_4h_map.items():
+                        if not k4h or len(k4h) < 60:
+                            continue
+                        closes_4h = [float(k['close']) for k in k4h if float(k.get('close', 0)) > 0]
+                        if len(closes_4h) < 60:
+                            continue
+                        ema20_arr = calc_ema(closes_4h, 20)
+                        ema50_arr = calc_ema(closes_4h, 50)
+                        rsi_arr = calc_rsi_wilder(closes_4h, 14)
+                        if not ema20_arr or not ema50_arr or not rsi_arr:
+                            continue
+                        price_now = closes_4h[-1]
+                        e20, e50, rsi_now = ema20_arr[-1], ema50_arr[-1], rsi_arr[-1]
+                        long_ok = (e20 > e50 and price_now > e20 and 45 <= rsi_now <= 75)
+                        short_ok = (e20 < e50 and price_now < e20 and 30 <= rsi_now <= 50)
+                        if long_ok or short_ok:
+                            survivors.append((coin, k4h))
+                    add_log(f"[趨勢] 4H 定向預檢: {len(klines_4h_map)} → {len(survivors)} 個候選")
+
+                    # Phase 2: 只為 survivors 抓 1H（節省 ~20 個 API 呼叫/輪）
+                    klines_1h_map = {}
+                    if survivors:
+                        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                            futs_1h = {
+                                executor.submit(fetch_klines, c["symbol"], "1h", 100): c
+                                for c, _ in survivors
+                            }
+                        for fut, coin in futs_1h.items():
+                            try:
+                                klines_1h_map[coin["symbol"]] = fut.result()
+                            except Exception:
+                                pass
+
+                    # Phase 3: analyze_trend on survivors only
+                    for coin, klines_4h in survivors:
+                        klines_1h = klines_1h_map.get(coin["symbol"])
+                        tres = analyze_trend(coin["symbol"], klines_4h, coin["change"],
+                                             learner, btc_trend, klines_1h=klines_1h,
+                                             log_fn=add_log)
+                        if tres:
+                            trend_results.append(tres)
                     trend_results.sort(key=lambda x: x["best_score"], reverse=True)
                     with state_lock:
                         state["trend_results"] = trend_results[:5]
                         state["trend_scan_time"] = datetime.now().strftime("%H:%M:%S")
                         state["trend_scan_timestamp"] = time.time()
-                    add_log(f"[趨勢] 趨勢���描完成，{len(trend_results)} 個訊號，取前 {min(5, len(trend_results))} 個")
+                    add_log(f"[趨勢] 趨勢掃描完成，{len(trend_results)} 個訊號，取前 {min(5, len(trend_results))} 個")
 
                     # Discord 通知趨勢強訊號
                     notify_strong_signals(trend_results[:5], tag="趨勢")
@@ -825,6 +865,10 @@ def run_background_scan():
             print(f"[SCAN ERROR] {err_msg}")
             traceback.print_exc()
             add_log(f"[ERROR] {err_msg}")
+            # A.2.4 fix: 掃描例外時刷新 scan_timestamp，告知消費端「scan 有在跑但這輪無結果」
+            # 否則 consumer 會持續讀上一輪的陳舊 results 直到 staleness guard (3×SCAN_INTERVAL) 觸發
+            with state_lock:
+                state["scan_timestamp"] = time.time()
 
             if consecutive_errors >= 3:
                 add_log(f"[ERROR] 連續 {consecutive_errors} 次錯誤，監控暫停。請點擊「重新啟動監控」按鈕。")

@@ -36,8 +36,10 @@ from crypto_monitor_v2 import (
 )
 from learning_engine import MarketRegime
 
-# Fee model: round-trip taker fees (0.05% per side x 2)
-BACKTEST_FEE_PCT = 0.1  # 0.1% round-trip fee
+# Fee model: round-trip taker fees (0.05% per side x 2) + 0.05% slippage
+# 對齊 crypto_monitor_v2.py BT_FEE_RATE=0.0015 / learning_engine.py / trading_bot.py
+# 舊值 0.1 會讓 auto_optimize 用錯誤成本搜尋參數，抵消 Plan A Fix #5 的意義
+BACKTEST_FEE_PCT = 0.15  # 0.15% round-trip fee (taker×2 + slippage)
 
 # ===== Session =====
 def _create_session():
