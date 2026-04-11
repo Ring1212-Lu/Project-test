@@ -418,6 +418,7 @@ def run_trading_bot(initial_balance=100):
                         # 用 post-slippage 的 entry/tp/sl 給 learner（與短線 path 一致）
                         # P1-2: trend TTL 改為 7×24h（對齊 MAX_TREND_POSITION_AGE）
                         # P1-3: 追加 entry_timing / session_hour
+                        # FIX: live_opened=True → validate 不做模擬，等 record_live_close 回填
                         learner.record_prediction(
                             symbol=tr["symbol"], strategy=strat,
                             entry_price=entry_price, tp_price=_recalc_tp, sl_price=_recalc_sl,
@@ -426,7 +427,10 @@ def run_trading_bot(initial_balance=100):
                             ttl=7 * 24 * 3600, atr=tr.get("atr", 0),
                             entry_timing=tr.get("entry_timing", ""),
                             session_hour=datetime.now().hour,
+                            live_opened=True,
                         )
+                        # 若先前 research scan 已寫入 pending（被 dedup），升級既有 flag
+                        learner.mark_live_opened(tr["symbol"], strat)
                         add_trading_log(f"[TREND] OPEN {sym_short} {strat}({side}) "
                                         f"{size_usd}U | Score:{tr['best_score']} | TP:{tr['tp']} SL:{tr['sl']}")
                         break
@@ -531,6 +535,7 @@ def run_trading_bot(initial_balance=100):
             if order_result.get("result") or order_result.get("paper_mode"):
                 # 用 post-slippage 的 entry/tp/sl 給 learner，確保學習驗證與實盤 fill 對齊
                 # P1-3: 追加 entry_timing / session_hour 元資料
+                # FIX: live_opened=True → validate 不做模擬，等 record_live_close 回填
                 learner.record_prediction(
                     symbol=r["symbol"], strategy=strat,
                     entry_price=entry_price, tp_price=recalc_tp, sl_price=recalc_sl,
@@ -538,7 +543,10 @@ def run_trading_bot(initial_balance=100):
                     atr=r.get("atr", 0),
                     entry_timing=r.get("entry_timing", ""),
                     session_hour=datetime.now().hour,
+                    live_opened=True,
                 )
+                # 若先前 research scan 已寫入 pending（被 dedup），升級既有 flag
+                learner.mark_live_opened(r["symbol"], strat)
                 opened += 1
                 add_trading_log(f"OPEN {r['symbol'].replace('_USDT_PERP','')} {strat}({side}) "
                                 f"{size_usd}U | Score:{r['best_score']} | TP:{r['tp']} SL:{r['sl']}")

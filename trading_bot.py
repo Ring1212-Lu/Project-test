@@ -757,6 +757,7 @@ def run_trading_loop(client, risk_mgr, learner):
             if order_result.get("result") or order_result.get("paper_mode"):
                 # 記錄學習預測（post-slippage，與 web_app.py 一致）
                 # P1-3: 追加 atr / entry_timing / session_hour 元資料
+                # FIX: live_opened=True → validate 不做模擬，等 record_live_close 回填
                 learner.record_prediction(
                     symbol=r["symbol"], strategy=strat,
                     entry_price=entry_price, tp_price=recalc_tp, sl_price=recalc_sl,
@@ -765,7 +766,10 @@ def run_trading_loop(client, risk_mgr, learner):
                     atr=r.get("atr", 0),
                     entry_timing=r.get("entry_timing", ""),
                     session_hour=datetime.now().hour,
+                    live_opened=True,
                 )
+                # 若先前 research scan 已記錄過（被 dedup），確保標記升級
+                learner.mark_live_opened(r["symbol"], strat)
                 opened += 1
             else:
                 # 下單失敗，回滾倉位
