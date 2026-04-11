@@ -348,8 +348,12 @@ def save_trade_log(risk_mgr):
 
 # ===== 持倉監控 =====
 
-def check_positions(risk_mgr, client):
-    """檢查持倉是否觸及止盈/止損"""
+def check_positions(risk_mgr, client, learner=None):
+    """檢查持倉是否觸及止盈/止損
+
+    P0-3: 若傳入 learner，則 position 平倉後呼叫 learner.record_live_close
+          將實盤結果回填到 learning_engine（權威來源）。
+    """
     if not risk_mgr.open_positions:
         return
 
@@ -418,6 +422,7 @@ def check_positions(risk_mgr, client):
                         old_sl = sl
                         pos["sl_price"] = round(new_sl, 6)
                         sl = pos["sl_price"]
+                        pos["trailing_active"] = True  # P2-2: 標記 trailing 觸發
                         print(f"{tag} {sym_short} 跟蹤止損更新: {old_sl:.4f} → {sl:.4f} "
                               f"(利潤 {profit_pct*100:.1f}%, {steps}步)")
                 else:
@@ -426,6 +431,7 @@ def check_positions(risk_mgr, client):
                         old_sl = sl
                         pos["sl_price"] = round(new_sl, 6)
                         sl = pos["sl_price"]
+                        pos["trailing_active"] = True  # P2-2: 標記 trailing 觸發
                         print(f"{tag} {sym_short} 跟蹤止損更新: {old_sl:.4f} → {sl:.4f} "
                               f"(利潤 {profit_pct*100:.1f}%, {steps}步)")
         else:
@@ -441,6 +447,7 @@ def check_positions(risk_mgr, client):
                             old_sl = sl
                             pos["sl_price"] = breakeven_sl
                             sl = breakeven_sl
+                            pos["breakeven_active"] = True  # P2-2: 標記保本觸發
                             print(f"{tag} {sym_short} 保本止損觸發: {old_sl:.6f} → {sl:.6f}")
                 else:
                     profit_dist = current - entry
@@ -450,6 +457,7 @@ def check_positions(risk_mgr, client):
                             old_sl = sl
                             pos["sl_price"] = breakeven_sl
                             sl = breakeven_sl
+                            pos["breakeven_active"] = True  # P2-2: 標記保本觸發
                             print(f"{tag} {sym_short} 保本止損觸發: {old_sl:.6f} → {sl:.6f}")
 
         if side == "SELL":  # 做空
@@ -491,6 +499,14 @@ def check_positions(risk_mgr, client):
                 except (NameError, UnboundLocalError):
                     age_str = "?"
 
+            # P2-2: 判定更精確的 close_reason（TP / SL / TIMEOUT / TRAILING / BREAKEVEN）
+            close_reason = reason
+            if reason == "SL":
+                if pos.get("trailing_active"):
+                    close_reason = "TRAILING"
+                elif pos.get("breakeven_active"):
+                    close_reason = "BREAKEVEN"
+
             # 平倉
             close_side = "BUY" if side == "SELL" else "SELL"
             result = client.place_order(sym, close_side, "MARKET", pos["quantity"])
@@ -498,10 +514,31 @@ def check_positions(risk_mgr, client):
             # 只在下單成功或紙交易模式下才記錄平倉
             if result.get("result") or result.get("paper_mode"):
                 risk_mgr.record_close(pos, round(pnl, 4))
+
+                # P0-3: 回填實盤平倉結果到 learner（權威來源）
+                if learner is not None:
+                    try:
+                        learner.record_live_close(
+                            symbol=sym,
+                            strategy=pos.get("strategy", ""),
+                            entry_price=entry,
+                            close_price=current,
+                            pnl=round(pnl, 4),
+                            close_reason=close_reason,
+                            regime=pos.get("regime", "unknown"),
+                            atr=pos.get("atr", 0),
+                            entry_timing=pos.get("entry_timing", ""),
+                            session_hour=pos.get("session_hour"),
+                            rate=pos.get("rate"),
+                            score=pos.get("score"),
+                        )
+                    except Exception as e:
+                        print(color(f"[LEARN] record_live_close 失敗: {e}", 'yellow'))
+
                 pnl_str = f"+{pnl:.4f}" if pnl >= 0 else f"{pnl:.4f}"
                 pnl_color = 'green' if pnl >= 0 else 'red'
 
-                print(color(f"\n{tag} [CLOSE] {sym_short} {reason} | PnL: {pnl_str}U ({pnl_pct:+.2f}%) | 持倉: {age_str}", pnl_color))
+                print(color(f"\n{tag} [CLOSE] {sym_short} {close_reason} | PnL: {pnl_str}U ({pnl_pct:+.2f}%) | 持倉: {age_str}", pnl_color))
                 print(f"   策略: {pos.get('strategy','')} | 方向: {side} | "
                       f"進場: {entry} → 出場: {current} | TP:{tp} SL:{sl} | 手續費: {fee:.4f}U")
                 save_trade_log(risk_mgr)
@@ -550,8 +587,8 @@ def run_trading_loop(client, risk_mgr, learner):
             print(color(f" HALTED: {status['halt_reason']}", 'red'))
         print(color(f"{'='*62}", 'cyan'))
 
-        # 檢查現有持倉
-        check_positions(risk_mgr, client)
+        # 檢查現有持倉（P0-3: 傳入 learner 讓平倉結果回填）
+        check_positions(risk_mgr, client, learner)
 
         # 驗證學習資料
         validated = learner.validate_pending_predictions()
@@ -659,6 +696,10 @@ def run_trading_loop(client, risk_mgr, learner):
                 "size": 0,  # updated after calc
                 "quantity": 0,  # updated after calc
                 "score": r["best_score"],
+                "rate": r.get("best_rate"),              # P0-3
+                "regime": r.get("regime", "unknown"),    # P0-3
+                "entry_timing": r.get("entry_timing", ""),  # P1-3
+                "session_hour": datetime.now().hour,        # P1-3
                 "signal_strength": r["signal_strength"],
                 "chaodi_score": r.get("chaodi_score"),
                 "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -715,11 +756,15 @@ def run_trading_loop(client, risk_mgr, learner):
 
             if order_result.get("result") or order_result.get("paper_mode"):
                 # 記錄學習預測（post-slippage，與 web_app.py 一致）
+                # P1-3: 追加 atr / entry_timing / session_hour 元資料
                 learner.record_prediction(
                     symbol=r["symbol"], strategy=strat,
                     entry_price=entry_price, tp_price=recalc_tp, sl_price=recalc_sl,
                     rate=r["best_rate"], score=r["best_score"],
                     regime=r["regime"],
+                    atr=r.get("atr", 0),
+                    entry_timing=r.get("entry_timing", ""),
+                    session_hour=datetime.now().hour,
                 )
                 opened += 1
             else:

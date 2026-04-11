@@ -88,6 +88,23 @@ def send_discord_message(message):
         pass  # 通知失敗不影響主流程
 
 
+# P2-1: entry_timing 中文顯示對照（內部代碼不變，僅 UI 層轉中文）
+ENTRY_TIMING_LABELS = {
+    "4H_ONLY":     "4H訊號",
+    "1H_PULLBACK": "✓回調入場",
+    "1H_ABOVE":    "在均線上方",
+    "1H_BELOW":    "在均線下方",
+    "1H_WAIT":     "⏳等待入場",
+    "1H_REJECT":   "⏳等待入場",  # 舊資料相容
+    "":            "",
+}
+
+
+def entry_timing_cn(code):
+    """將 entry_timing 代碼轉為中文顯示（找不到就回原字串）"""
+    return ENTRY_TIMING_LABELS.get(code or "", code or "")
+
+
 def notify_strong_signals(results, tag="短線"):
     """掃描完成後，將 STRONG 訊號透過 Discord 通知"""
     strong = [r for r in results if r.get("signal_strength") == "STRONG"]
@@ -97,7 +114,9 @@ def notify_strong_signals(results, tag="短線"):
     for r in strong[:5]:  # 最多通知 5 個
         sym = r["symbol"].replace("_USDT_PERP", "")
         hold = f"持倉 {r.get('hold_days', '?')} 天" if r.get("strategy_type") == "trend" else ""
-        timing = f"入場:{r.get('entry_timing', '')}" if r.get("entry_timing") else ""
+        # P2-1: 改用中文顯示
+        _et = r.get("entry_timing", "")
+        timing = f"入場:{entry_timing_cn(_et)}" if _et else ""
         chaodi_info = f"抄底分:{r.get('chaodi_score')}" if r.get("chaodi_score") else ""
         lines.append(
             f"```\n[{tag}] {sym} | {r['best_strat']} | "
@@ -173,7 +192,8 @@ def _check_positions(risk_mgr, client):
     with risk_mgr._lock:
         before_ids = {p["id"]: dict(p) for p in risk_mgr.open_positions}
     n_positions = len(before_ids)
-    check_positions(risk_mgr, client)
+    # P0-3: 傳入 learner 讓平倉結果以實盤 PnL 回填到 history（權威來源）
+    check_positions(risk_mgr, client, get_shared_learner())
     # Detect closed positions — snapshot under lock
     with risk_mgr._lock:
         after_ids = {p["id"] for p in risk_mgr.open_positions}
@@ -329,10 +349,10 @@ def run_trading_bot(initial_balance=100):
                     add_trading_log(f"[TREND] 評估: {sym_short} {tr['best_strat']} "
                                     f"分數:{tr['best_score']} 勝率:{tr['best_rate']}% "
                                     f"強度:{tr.get('signal_strength','?')} R:R:{tr.get('rr',0)} "
-                                    f"入場:{tr.get('entry_timing','?')}")
-                    # 1H_WAIT: 顯示在前端但不自動開倉
+                                    f"入場:{entry_timing_cn(tr.get('entry_timing',''))}")
+                    # P2-1: 1H_WAIT → ⏳等待入場，顯示在前端但不自動開倉
                     if tr.get("entry_timing") == "1H_WAIT":
-                        add_trading_log(f"[TREND] {sym_short}: WAIT (4H方向OK但1H時機未到，僅顯示)")
+                        add_trading_log(f"[TREND] {sym_short}: ⏳等待入場 (4H方向OK但1H時機未到，僅顯示)")
                         continue
                     cooldown_until = _symbol_cooldown.get(tr["symbol"], 0)
                     if time.time() < cooldown_until:
@@ -377,6 +397,10 @@ def run_trading_bot(initial_balance=100):
                         "size": size_usd,
                         "quantity": quantity,
                         "score": tr["best_score"],
+                        "rate": tr.get("best_rate"),  # P0-3: record_live_close 需要
+                        "regime": tr.get("regime", "unknown"),  # P0-3
+                        "entry_timing": tr.get("entry_timing", ""),  # P1-3
+                        "session_hour": datetime.now().hour,  # P1-3
                         "signal_strength": tr.get("signal_strength", "WEAK"),
                         "atr": tr.get("atr", 0),
                         "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -392,12 +416,16 @@ def run_trading_bot(initial_balance=100):
                     order_result = client.place_order(tr["symbol"], side, "MARKET", quantity)
                     if order_result.get("result") or order_result.get("paper_mode"):
                         # 用 post-slippage 的 entry/tp/sl 給 learner（與短線 path 一致）
+                        # P1-2: trend TTL 改為 7×24h（對齊 MAX_TREND_POSITION_AGE）
+                        # P1-3: 追加 entry_timing / session_hour
                         learner.record_prediction(
                             symbol=tr["symbol"], strategy=strat,
                             entry_price=entry_price, tp_price=_recalc_tp, sl_price=_recalc_sl,
                             rate=tr["best_rate"], score=tr["best_score"],
                             regime=tr.get("regime", "unknown"),
-                            ttl=72 * 3600, atr=tr.get("atr", 0),
+                            ttl=7 * 24 * 3600, atr=tr.get("atr", 0),
+                            entry_timing=tr.get("entry_timing", ""),
+                            session_hour=datetime.now().hour,
                         )
                         add_trading_log(f"[TREND] OPEN {sym_short} {strat}({side}) "
                                         f"{size_usd}U | Score:{tr['best_score']} | TP:{tr['tp']} SL:{tr['sl']}")
@@ -483,6 +511,10 @@ def run_trading_bot(initial_balance=100):
                 "size": size_usd,
                 "quantity": quantity,
                 "score": r["best_score"],
+                "rate": r.get("best_rate"),  # P0-3: record_live_close 需要
+                "regime": r.get("regime", "unknown"),  # P0-3
+                "entry_timing": r.get("entry_timing", ""),  # P1-3
+                "session_hour": datetime.now().hour,  # P1-3
                 "signal_strength": r["signal_strength"],
                 "chaodi_score": r.get("chaodi_score"),
                 "atr": r.get("atr", 0),
@@ -498,12 +530,14 @@ def run_trading_bot(initial_balance=100):
 
             if order_result.get("result") or order_result.get("paper_mode"):
                 # 用 post-slippage 的 entry/tp/sl 給 learner，確保學習驗證與實盤 fill 對齊
-                # 舊版傳 pre-slippage 的 price/r["tp"]/r["sl"]，樂觀約 0.1%/trade
+                # P1-3: 追加 entry_timing / session_hour 元資料
                 learner.record_prediction(
                     symbol=r["symbol"], strategy=strat,
                     entry_price=entry_price, tp_price=recalc_tp, sl_price=recalc_sl,
                     rate=r["best_rate"], score=r["best_score"], regime=r["regime"],
                     atr=r.get("atr", 0),
+                    entry_timing=r.get("entry_timing", ""),
+                    session_hour=datetime.now().hour,
                 )
                 opened += 1
                 add_trading_log(f"OPEN {r['symbol'].replace('_USDT_PERP','')} {strat}({side}) "
@@ -673,12 +707,25 @@ def run_background_scan():
 
             if results:
                 results.sort(key=lambda x: x["best_score"], reverse=True)
-                top = results[:TOP_N]
+
+                # P2-3: 信號擁擠過濾 — 若同一方向的強訊號 > 15 個，暗示市場整體同向
+                # （可能是連環漲跌而非個別訊號），回測 edge 大幅縮水，跳過本輪交易。
+                _sell = sum(1 for r in results if r["best_strat"] in SELL_STRATEGIES)
+                _buy = len(results) - _sell
+                _crowded = max(_sell, _buy) > 15
+                if _crowded:
+                    add_log(f"[CROWDING] 偵測到訊號擁擠 SELL:{_sell} BUY:{_buy} > 15 → "
+                            f"只取 top 1 避免 alpha 稀釋")
+                    top = results[:1]
+                else:
+                    top = results[:TOP_N]
 
                 # Discord 通知強訊號
                 notify_strong_signals(top)
 
                 # 記錄預測（嚴格版）
+                # P1-3: entry_timing / session_hour
+                _now_hour = datetime.now().hour
                 for r in top:
                     learner.record_prediction(
                         symbol=r["symbol"],
@@ -690,12 +737,19 @@ def run_background_scan():
                         score=r["best_score"],
                         regime=r["regime"],
                         atr=r.get("atr", 0),
+                        entry_timing=r.get("entry_timing", ""),
+                        session_hour=_now_hour,
                     )
 
                 # 記錄寬鬆版預測（用於 A/B 比較）
+                # P0-4: 做空(寬) 僅在 trending_down regime 才記錄（避免在盤整/上升期無效累樣）
                 for r in results:
+                    r_regime = r.get("regime", "unknown")
                     all_strats = r.get("all_strats", {})
                     for relaxed_name in ["做空(寬)", "抄底(寬)"]:
+                        # P0-4 gate
+                        if relaxed_name == "做空(寬)" and r_regime != "trending_down":
+                            continue
                         rs = all_strats.get(relaxed_name)
                         if rs and rs["total"] >= 3 and rs["score"] > 0:
                             base = relaxed_name.replace("(寬)", "").strip()
@@ -718,7 +772,10 @@ def run_background_scan():
                                 sl_price=sl_p,
                                 rate=rs["rate"],
                                 score=rs["score"],
-                                regime=r["regime"],
+                                regime=r_regime,
+                                atr=atr,
+                                entry_timing=r.get("entry_timing", ""),
+                                session_hour=_now_hour,
                             )
 
                 with state_lock:
@@ -807,12 +864,19 @@ def run_background_scan():
                     notify_strong_signals(trend_results[:5], tag="趨勢")
 
                     # 記錄趨勢預測
+                    # P1-2: trend TTL 7×24h（對齊 MAX_TREND_POSITION_AGE）
+                    # P1-3: 追加 atr / entry_timing / session_hour
+                    _trend_hour = datetime.now().hour
                     for r in trend_results[:3]:
                         learner.record_prediction(
                             symbol=r["symbol"], strategy=r["best_strat"],
                             entry_price=r["price"], tp_price=r["tp"], sl_price=r["sl"],
                             rate=r["best_rate"], score=r["best_score"],
-                            regime=r.get("regime", "unknown"), ttl=72 * 3600,
+                            regime=r.get("regime", "unknown"),
+                            ttl=7 * 24 * 3600,
+                            atr=r.get("atr", 0),
+                            entry_timing=r.get("entry_timing", ""),
+                            session_hour=_trend_hour,
                         )
                 except Exception as e:
                     print(f"[TREND] Error: {e}")

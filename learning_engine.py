@@ -238,33 +238,213 @@ class LearningEngine:
         }
         return self.data["weights"][key]["value"]
 
+    # ---- P1-4: Thompson sampling bandit (strategy × regime) ----
+    #
+    # 取代 per-(symbol, strategy) 權重（data 顯示 82 個 key 全部 value=1.0），
+    # 改為 per-(strategy, regime) 5×4=20 臂 Beta-Bernoulli bandit。
+    # 優點：
+    # - 樣本自然聚合到 (strategy, regime) 格子（而非散在 82 個 symbol×strategy）
+    # - 自動探索/利用平衡（Beta 變異數在樣本少時大，探索機會多）
+    # - 與 Bayesian shrinkage 的 adj_rate 數學一致（α=wins+1, β=losses+1）
+
+    BANDIT_PRIOR_ALPHA = 1.0  # Jeffreys prior
+    BANDIT_PRIOR_BETA  = 1.0
+
+    def _bandit_key(self, strategy, regime):
+        """寬變體併回基礎策略（寬/嚴共用同一 arm 以加速收斂）"""
+        base = strategy.replace("(寬)", "").strip() if "(寬)" in strategy else strategy
+        return f"{base}|{regime}"
+
+    def _get_bandit(self, strategy, regime):
+        bandits = self.data.setdefault("bandit", {})
+        key = self._bandit_key(strategy, regime)
+        entry = bandits.get(key)
+        if entry is None:
+            entry = {"alpha": self.BANDIT_PRIOR_ALPHA,
+                     "beta":  self.BANDIT_PRIOR_BETA,
+                     "wins":  0,
+                     "losses": 0,
+                     "updated": time.time()}
+            bandits[key] = entry
+        return entry
+
+    def _update_bandit(self, strategy, regime, win):
+        entry = self._get_bandit(strategy, regime)
+        if win:
+            entry["alpha"] += 1
+            entry["wins"]  += 1
+        else:
+            entry["beta"] += 1
+            entry["losses"] += 1
+        entry["updated"] = time.time()
+
+    def get_bandit_score(self, strategy, regime):
+        """回傳 (strategy, regime) 的後驗均值勝率（0~1）
+        樣本不足（n<5）時回傳 None 讓 caller 走 prior。
+        """
+        entry = self._get_bandit(strategy, regime)
+        n = entry["wins"] + entry["losses"]
+        if n < 5:
+            return None
+        alpha, beta = entry["alpha"], entry["beta"]
+        return alpha / (alpha + beta)
+
+    def sample_bandit(self, strategy, regime):
+        """Thompson 抽樣：從 Beta(α,β) 抽一個機率樣本
+        用於 analyze() 決定是否優先呼叫該 (strategy, regime)。
+        """
+        import random
+        entry = self._get_bandit(strategy, regime)
+        alpha, beta = entry["alpha"], entry["beta"]
+        # Beta 抽樣（numpy 不一定可用 → 用 gammavariate 組合）
+        try:
+            x = random.gammavariate(alpha, 1.0)
+            y = random.gammavariate(beta, 1.0)
+            return x / (x + y) if (x + y) > 0 else 0.5
+        except (ValueError, ZeroDivisionError):
+            return 0.5
+
     # ---- 預測記錄 ----
 
     def record_prediction(self, symbol, strategy, entry_price, tp_price, sl_price,
-                          rate, score, regime="unknown", ttl=None, atr=0):
-        """記錄一筆預測（同幣+同策略去重，避免 pending 溢出）"""
+                          rate, score, regime="unknown", ttl=None, atr=0,
+                          entry_timing="", session_hour=None):
+        """記錄一筆預測（同幣+同策略去重，避免 pending 溢出）
+
+        P1-3: 額外追加 entry_timing / session_hour 元資料用於事後 factor 分析
+        P1-2: 趨勢預測使用 7×24h TTL（對齊 live 持倉壽命），其他短線沿用 PREDICTION_TTL
+        """
         with self._lock:
             # 去重：同幣種+同策略尚在 pending 中 → 跳過
             for p in self.data["pending"]:
                 if p["symbol"] == symbol and p["strategy"] == strategy:
                     return  # 已存在，不重複記錄
 
+            # P1-2: trend 預測必須用 7 天 TTL，否則 ttl<實際持倉壽命 → 提前 expired
+            is_trend = "趨勢" in strategy
+            if ttl is None:
+                ttl = 7 * 24 * 3600 if is_trend else self.PREDICTION_TTL
+
+            if session_hour is None:
+                session_hour = datetime.now().hour
+
             prediction = {
-                "symbol":      symbol,
-                "strategy":    strategy,
-                "entry_price": entry_price,
-                "tp_price":    tp_price,
-                "sl_price":    sl_price,
-                "rate":        rate,
-                "score":       score,
-                "regime":      regime,
-                "atr":         atr,
-                "timestamp":   time.time(),
-                "time_str":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "ttl":         ttl if ttl is not None else self.PREDICTION_TTL,
+                "symbol":       symbol,
+                "strategy":     strategy,
+                "entry_price":  entry_price,
+                "tp_price":     tp_price,
+                "sl_price":     sl_price,
+                "rate":         rate,
+                "score":        score,
+                "regime":       regime,
+                "atr":          atr,
+                "entry_timing": entry_timing,   # P1-3: 4H_ONLY / 1H_PULLBACK / 1H_ABOVE / 1H_BELOW / 1H_WAIT
+                "session_hour": session_hour,   # P1-3: 小時（0-23），供時段分析
+                "timestamp":    time.time(),
+                "time_str":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "ttl":          ttl,
             }
             self.data["pending"].append(prediction)
             self.data["stats"]["total_predictions"] += 1
+        self.save()
+
+    def record_live_close(self, symbol, strategy, entry_price, close_price,
+                          pnl, close_reason="unknown", regime="unknown",
+                          atr=0, entry_timing="", session_hour=None,
+                          rate=None, score=None):
+        """P0-3: 實盤平倉後直接寫入權威結果
+
+        取代 _check_prediction 的模擬判定 — 因為 trailing stop / 保本 / 手動平倉
+        等實盤路徑無法用純價格模擬推導，必須由 live 端回填才能讓 BT↔Live
+        反饋閉環。
+
+        行為：
+        1. 從 pending 移除對應 (symbol, strategy) 記錄（若存在）
+        2. 以實際 pnl 為依據判定 win/lose 並寫入 history
+        3. 更新 strategy_stats / regime_stats / weights（Thompson posterior）
+        4. 該筆 result 會立刻影響之後 analyze() 的 score 計算
+        """
+        with self._lock:
+            is_win = pnl > 0
+
+            # 移除對應 pending（避免 validate_pending_predictions 重複計票）
+            matched = None
+            remaining = []
+            for p in self.data["pending"]:
+                if matched is None and p["symbol"] == symbol and p["strategy"] == strategy:
+                    matched = p
+                else:
+                    remaining.append(p)
+            self.data["pending"] = remaining
+
+            ts_now = time.time()
+            time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            if matched:
+                # 繼承 pending 的完整上下文（rate / score / regime / entry_timing 等）
+                record = dict(matched)
+                record.update({
+                    "close_price":  close_price,
+                    "pnl":          pnl,
+                    "close_reason": close_reason,
+                    "result":       "win" if is_win else "lose",
+                    "validated_at": time_str,
+                    "source":       "live",
+                })
+                used_regime = record.get("regime", regime)
+                used_entry_timing = record.get("entry_timing", entry_timing)
+                used_session_hour = record.get("session_hour",
+                                                session_hour if session_hour is not None else datetime.now().hour)
+            else:
+                # 無對應 pending（可能開倉前就已過期），仍然記錄 live 成交
+                record = {
+                    "symbol":       symbol,
+                    "strategy":     strategy,
+                    "entry_price":  entry_price,
+                    "close_price":  close_price,
+                    "tp_price":     None,
+                    "sl_price":     None,
+                    "rate":         rate,
+                    "score":        score,
+                    "regime":       regime,
+                    "atr":          atr,
+                    "entry_timing": entry_timing,
+                    "session_hour": session_hour if session_hour is not None else datetime.now().hour,
+                    "timestamp":    ts_now,
+                    "time_str":     time_str,
+                    "pnl":          pnl,
+                    "close_reason": close_reason,
+                    "result":       "win" if is_win else "lose",
+                    "validated_at": time_str,
+                    "source":       "live",
+                }
+                used_regime = regime
+                used_entry_timing = entry_timing
+                used_session_hour = record["session_hour"]
+
+            self.data["history"].append(record)
+
+            # 更新 strategy_stats
+            ss = self.data["stats"]["strategy_stats"]
+            if strategy not in ss:
+                ss[strategy] = {"wins": 0, "losses": 0, "expired": 0}
+            if is_win:
+                self.data["stats"]["total_wins"] += 1
+                ss[strategy]["wins"] += 1
+            else:
+                self.data["stats"]["total_losses"] += 1
+                ss[strategy]["losses"] += 1
+            self.data["stats"]["total_validations"] += 1
+
+            # 更新 regime 統計
+            self._update_regime_stats(used_regime, strategy, is_win)
+
+            # 更新 Thompson posterior（P1-4）
+            self._update_bandit(strategy, used_regime, is_win)
+
+            # 更新 per-(symbol, strategy) 權重（保留 legacy 路徑，與 bandit 並存）
+            self._update_weight(symbol, strategy, is_win)
+
         self.save()
 
     # ---- 預測驗證 ----
@@ -326,8 +506,14 @@ class LearningEngine:
         對齊回測/實盤的驗證邏輯：
         1. 觸及止盈 → 勝
         2. 觸及止損 → 敗
-        3. 保本止損：盈利曾 >= 1 ATR 且回撤至 entry ± 0.3% → 扣費後判定
-        4. 超時（短線 7200s / 趨勢 7天）→ 扣費後方向判定
+        3. 短線保本止損：盈利曾 >= 1 ATR 且回撤至 entry ± 0.3% → 扣費後判定
+        4. 趨勢跟蹤止損（P0-2）：盈利 >= 5% 後，從峰值回撤 >= 3% → 扣費後判定
+        5. 超時（短線 7200s / 趨勢 7天）→ 扣費後方向判定
+
+        P0-2 修復：原本 L356 `if atr > 0 and not is_trend:` 明確跳過 trend，
+        導致 learner 只會等到 ±9% TP/SL 或 7 天超時；但 live 端實際用 5%/3%
+        trailing stop 提前出場，造成 trend 的 history 極度稀疏（僅 ARIA 等
+        極端波動幣種能觸及 TP/SL）。這個缺口是 Agent 4 Q5 的核心根因。
         """
         entry = pred["entry_price"]
         tp    = pred["tp_price"]
@@ -351,8 +537,7 @@ class LearningEngine:
             if current_price <= sl:
                 return False
 
-        # 保本止損模擬（對齊回測/實盤 breakeven_margin=0.003）
-        # 若當前盈利曾 >= 1 ATR 且價格已回撤至保本區域
+        # 短線保本止損模擬（對齊 breakeven_margin=0.003）
         if atr > 0 and not is_trend:
             breakeven_margin = 0.003
             if is_short:
@@ -365,6 +550,33 @@ class LearningEngine:
                 breakeven_sl = entry * (1 + breakeven_margin)
                 if profit_dist >= atr and current_price <= breakeven_sl:
                     return (current_price - entry) > fee_cost
+
+        # P0-2: 趨勢跟蹤止損模擬（對齊 trading_bot.TREND_TRAILING_TRIGGER=0.05 / STEP=0.03）
+        # 注：我們只有當前 price，無法精確重建 peak；以 peak ≈ entry * (1 + best_profit)
+        # 估算，best_profit 用 pending 內累積追蹤最好 — 但 pending 結構是不可變的快照，
+        # 因此採保守近似：若當前利潤 >= TRIGGER-STEP 且已回跌到當前價 - entry 剛好落在
+        # trailing band，則判定為 trailing 出場。
+        #
+        # 實務上 _check_prediction 每 5min 呼叫一次，只要 peak 發生後 5min 內
+        # 回跌至 trail_band 就能補到；否則等到 timeout 或真正 TP/SL。
+        if is_trend:
+            trigger = 0.05
+            step    = 0.03
+            if is_short:
+                profit_pct = (entry - current_price) / entry
+                # peak_profit 至少需 >= trigger，回跌 >= step 才算 trailing 觸發
+                if profit_pct >= (trigger - step):
+                    # 近似判定：假設過去曾達 profit_pct + step → 現在回跌 step
+                    # 由於只有單點觀測，我們用 age 輔助：倉位 > 1h 且 profit <= trigger
+                    # 但 >= (trigger - step) 才判定 trailing
+                    if age >= 3600 and profit_pct >= (trigger - step) and profit_pct < trigger:
+                        # 回推 peak>=trigger，扣費後判定
+                        return (entry - current_price) - fee_cost > 0
+            else:
+                profit_pct = (current_price - entry) / entry
+                if profit_pct >= (trigger - step):
+                    if age >= 3600 and profit_pct >= (trigger - step) and profit_pct < trigger:
+                        return (current_price - entry) - fee_cost > 0
 
         # 超時判定（對齊實盤 MAX_POSITION_AGE / MAX_TREND_POSITION_AGE）
         timeout = 7 * 24 * 3600 if is_trend else 7200

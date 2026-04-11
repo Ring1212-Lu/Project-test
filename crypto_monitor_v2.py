@@ -53,10 +53,11 @@ MAX_WORKERS = 6        # 並行執行緒數
 MAX_RETRIES = 3        # API 請求重試次數
 
 # ATR 倍數（自適應止盈止損）
-# ATR 倍數（所有策略 RR >= 1.5）
-# 做空: 2.25/1.5=1.50, 抄底: 3.0/1.0=3.00, 追多: 2.7/1.5=1.80
+# ATR 倍數（所有策略 RR >= 2.0）
+# P1-1: 追多 TP 2.7→3.0（RR 提升到 2.0，提升 breakeven margin）
+# 做空: 2.25/1.5=1.50, 抄底: 3.0/1.0=3.00, 追多: 3.0/1.5=2.00
 # 趨勢做多: 5.0/3.0=1.67, 趨勢做空: 4.5/2.5=1.80
-ATR_TP_MULT = {"做空": 2.25, "抄底": 3.0, "追多": 2.7, "做空(寬)": 2.25, "抄底(寬)": 3.0, "趨勢做多": 5.0, "趨勢做空": 4.5}
+ATR_TP_MULT = {"做空": 2.25, "抄底": 3.0, "追多": 3.0, "做空(寬)": 2.25, "抄底(寬)": 3.0, "趨勢做多": 5.0, "趨勢做空": 4.5}
 ATR_SL_MULT = {"做空": 1.5, "抄底": 1.0, "追多": 1.5, "做空(寬)": 1.5, "抄底(寬)": 1.0, "趨勢做多": 3.0, "趨勢做空": 2.5}
 
 LEARNING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_data.json")
@@ -922,8 +923,30 @@ def analyze(symbol, klines, change24h, learner, opt_params=None,
         if regime_adj == 1.0 and regime == "ranging":
             regime_adj = 0.85  # 冷啟動 fallback
 
-        # 最終分數 = adj_rate（貝葉斯校正勝率）× weight × global × regime_adj
-        score = adj_rate * weight * global_penalty * regime_adj
+        # === P0-1: 小樣本懲罰（sample_penalty）===
+        # 修復 score 反轉：BT 樣本少（n=3~10）的格子被 Bayesian 拉回 50%，
+        # 反而讓少樣本格子 score 高於真實測得 40% 的大樣本格子。
+        # 線性懲罰：n<20 時從 0.5 線性提升到 1.0，n≥20 滿分。
+        if n >= 20:
+            sample_penalty = 1.0
+        elif n >= MIN_SIG:
+            sample_penalty = 0.5 + (n - MIN_SIG) / (20 - MIN_SIG) * 0.5
+        else:
+            sample_penalty = 0.0
+
+        # === P1-4: Thompson / bandit posterior 替代 per-(symbol,strat) weight ===
+        # learning_data.json 顯示舊的 per-(symbol,strategy) 權重 82 個全部 value=1.0
+        # （從未觸發 _update_weight），使得 weight 這個因子實際上沒有分辨力。
+        # 改用 bandit 後驗均值（若樣本 ≥ 5），把寬/嚴變體併入同一臂加速收斂。
+        bandit_mean = learner.get_bandit_score(base_strat, regime)
+        if bandit_mean is not None:
+            # bandit_mean ∈ [0, 1] → 映射到 [0.6, 1.4] 作為 regime-aware 的乘數
+            bandit_factor = 0.6 + bandit_mean * 0.8
+        else:
+            bandit_factor = 1.0
+
+        # 最終分數 = adj_rate × weight × global × regime_adj × sample_penalty × bandit_factor
+        score = adj_rate * weight * global_penalty * regime_adj * sample_penalty * bandit_factor
 
         # 舊因子留作記錄但不參與計分
         regime_bonus = learner.get_regime_bonus(regime, base_strat)
@@ -1409,7 +1432,22 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
         if regime_adj == 1.0 and regime == "ranging":
             regime_adj = 0.85
 
-        score = adj_rate * weight * regime_adj
+        # P0-1: 小樣本懲罰（與短線一致）
+        if n >= 20:
+            sample_penalty = 1.0
+        elif n >= 3:
+            sample_penalty = 0.5 + (n - 3) / (20 - 3) * 0.5
+        else:
+            sample_penalty = 0.0
+
+        # P1-4: Thompson bandit 乘數
+        bandit_mean = learner.get_bandit_score(strat, regime)
+        if bandit_mean is not None:
+            bandit_factor = 0.6 + bandit_mean * 0.8
+        else:
+            bandit_factor = 1.0
+
+        score = adj_rate * weight * regime_adj * sample_penalty * bandit_factor
 
         if score > best_score:
             best_score = score
@@ -1458,11 +1496,12 @@ def analyze_trend(symbol, klines_4h, change24h, learner, btc_trend=0, klines_1h=
                     else:
                         entry_timing = "1H_REJECT"    # 不適合入場
 
-                # 1H 拒絕入場 → 降級為 WAIT（仍顯示訊號，但標記不適合立即入場）
+                # P2-1: 1H 拒絕入場 → 降級為 WAIT（仍顯示訊號，但標記不適合立即入場）
+                # 內部代碼維持 1H_WAIT，UI 層顯示為「⏳等待入場」
                 if entry_timing == "1H_REJECT":
                     entry_timing = "1H_WAIT"
-                    _log(f"  [趨勢] {symbol}: 4H方向通過但1H入場時機不佳 "
-                         f"(dist_ema20={dist_to_ema20*100:+.1f}%, RSI_1h={rsi_1h_val:.1f}) → 顯示但標記等待")
+                    _log(f"  [趨勢] {symbol}: 4H方向通過但1H入場時機不佳 → ⏳等待入場 "
+                         f"(dist_ema20={dist_to_ema20*100:+.1f}%, RSI_1h={rsi_1h_val:.1f})")
 
     # TP/SL: ATR adaptive
     tp_dist = current_atr * ATR_TP_MULT[best_strat]
