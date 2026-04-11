@@ -681,7 +681,10 @@ def run_trading_loop(client, risk_mgr, learner):
             from crypto_monitor_v2 import SELL_STRATEGIES
             side = "SELL" if strat in SELL_STRATEGIES else "BUY"
             price = r["price"]
-            is_trend = strat.startswith("趨勢")
+            # /audit §7.2 fix: 用 set 比對取代 startswith，
+            # 與 SELL_STRATEGIES 的 set 比對模式一致，避免字串前綴誤判
+            TREND_STRATEGIES = {"趨勢做多", "趨勢做空"}
+            is_trend = strat in TREND_STRATEGIES
 
             pos = {
                 "id": f"pos_{int(time.time()*1000)}",

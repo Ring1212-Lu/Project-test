@@ -771,19 +771,27 @@ class LearningEngine:
         return ranked[:n]
 
     def cleanup_stale_weights(self, max_age_hours=168):
-        """清理超過指定時間未更新的權重（預設 7 天）"""
-        now = time.time()
-        removed = 0
-        for key in list(self.data["weights"].keys()):
-            entry = self.data["weights"][key]
-            if isinstance(entry, dict):
-                age_hours = (now - entry.get("updated", now)) / 3600
-                if age_hours > max_age_hours:
-                    del self.data["weights"][key]
-                    removed += 1
+        """清理超過指定時間未更新的權重（預設 7 天）
+
+        /audit §1.3 fix: 全程持 self._lock，避免並行 save() iterate weights 時
+        觸發 RuntimeError: dictionary changed size during iteration。
+        呼叫點在 web_app.run_background_scan（round_num%50==0），
+        與 learner thread / bot thread 的 save() 並行 → race 可實際發生。
+        """
+        with self._lock:
+            now = time.time()
+            removed = 0
+            for key in list(self.data["weights"].keys()):
+                entry = self.data["weights"][key]
+                if isinstance(entry, dict):
+                    age_hours = (now - entry.get("updated", now)) / 3600
+                    if age_hours > max_age_hours:
+                        del self.data["weights"][key]
+                        removed += 1
+            if removed > 0:
+                print(f"[LEARN] 清理了 {removed} 組過期權重")
         if removed > 0:
-            print(f"[LEARN] 清理了 {removed} 組過期權重")
-            self.save()
+            self.save()  # save() 本身會取 RLock，RLock 可重入但避免嵌套更乾淨
         return removed
 
     # ---- 自動優化引擎 ----
