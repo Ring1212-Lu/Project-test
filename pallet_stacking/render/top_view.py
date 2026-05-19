@@ -10,15 +10,27 @@ from ._common import draw_pallet_outline_2d, add_dim_arrow, style_axis_2d
 
 
 def draw_top_view(ax, result: StackingResult, layer_index: int = 0,
-                  show_dimensions: bool = True):
+                  show_dimensions: bool = True,
+                  fillers=None):
     """Plan view of one layer.
 
     Cartons are drawn as orange rectangles (top face) outlined in black.
     Cartons with visible barcode (touching the usable boundary) get a
     thin green tick on the relevant edge.
+
+    If ``fillers`` is provided (a list of ``(x, y, w, h)`` tuples), each
+    rectangle is drawn behind the cartons in a hatched light-blue style
+    to mark dunnage / void-fill positions.
     """
     pallet = result.pallet
     draw_pallet_outline_2d(ax, pallet, show_margin=True)
+
+    if fillers:
+        for fx, fy, fw, fh in fillers:
+            ax.add_patch(Rectangle(
+                (fx, fy), fw, fh,
+                facecolor="#CFE2F3", edgecolor="#5B8CB5",
+                linewidth=0.8, hatch="///", alpha=0.65, zorder=0.5))
 
     AXIS_TO_ROLE = {"L": "side", "W": "front", "H": "top"}
     if 0 <= layer_index < len(result.layers):

@@ -24,8 +24,9 @@ import streamlit as st
 from pallet_stacking import PALLET_PRESETS, SHIPPING_PRESETS, FACE_COLORS
 from pallet_stacking.core   import (
     optimize, compare_solutions, verify_layer, area_upper_bound,
+    spread_layer, filler_rectangles,
 )
-from pallet_stacking.models import Carton, Pallet
+from pallet_stacking.models import Carton, Pallet, StackingResult
 from pallet_stacking.render import (
     draw_top_view, draw_pallet_3d, draw_single_carton_3d,
 )
@@ -151,7 +152,6 @@ with st.sidebar:
     cl  = st.number_input("長 L (mm)",  value=378.0, min_value=1.0, step=10.0)
     cw  = st.number_input("寬 W (mm)",  value=198.0, min_value=1.0, step=10.0)
     ch  = st.number_input("高 H (mm)",  value=400.0, min_value=1.0, step=10.0)
-    cwt = st.number_input("重量 (kg)",  value=1.5,   min_value=0.0, step=0.1)
     cn  = st.text_input  ("品名 / SKU", value="棧板群組")
     bc_label = st.selectbox("條碼面",
                             ["L (側面)", "W (正面)", "H (頂面)"], index=0)
@@ -162,10 +162,9 @@ with st.sidebar:
     preset_dims = PALLET_PRESETS[preset]
     default_l = preset_dims[0] if preset_dims else 1200
     default_w = preset_dims[1] if preset_dims else 1000
-    pl  = st.number_input("長 (mm)",         value=float(default_l), step=10.0)
-    pw  = st.number_input("寬 (mm)",         value=float(default_w), step=10.0)
-    ph  = st.number_input("棧板高 (mm)",     value=120.0, step=5.0)
-    pwt = st.number_input("棧板重量 (kg)",   value=30.0,  step=1.0)
+    pl  = st.number_input("長 (mm)", value=float(default_l), step=10.0)
+    pw  = st.number_input("寬 (mm)", value=float(default_w), step=10.0)
+    ph  = st.number_input("棧板高 (mm)", value=120.0, step=5.0)
 
     shipping = st.selectbox("運輸方式", list(SHIPPING_PRESETS.keys()))
     sh_max = SHIPPING_PRESETS[shipping]
@@ -173,21 +172,36 @@ with st.sidebar:
     mh = st.number_input("最大總高 (mm)", value=default_mh, step=10.0)
 
     st.markdown("### 安全距離")
-    c1, c2 = st.columns(2)
-    with c1:
-        mf = st.number_input("邊距:前", value=0.0, step=5.0)
-        ml = st.number_input("邊距:左", value=0.0, step=5.0)
-    with c2:
-        mb = st.number_input("邊距:後", value=0.0, step=5.0)
-        mr = st.number_input("邊距:右", value=0.0, step=5.0)
+    safety = st.number_input("棧板四周安全距離 (mm)", value=0.0,
+                             min_value=0.0, step=5.0,
+                             help="同時套用到棧板的前/後/左/右四個邊。")
     gap = st.number_input("箱間距 (mm)", value=0.0, min_value=0.0, step=1.0)
+    mf = mb = ml = mr = safety
 
     st.markdown("### 演算法")
     allow_interlock = st.checkbox("允許交錯堆疊 (interlock)", value=True)
+    spread_filler = st.checkbox(
+        "🟦 填充展開（在箱間加緩衝物撐滿棧板）", value=False,
+        help="箱數已最佳但堆疊面積偏小時,把箱子向四周散開貼齊棧板邊,"
+             "並列出中間需要的填充物(dunnage)區塊尺寸。")
+    min_filler_dim = st.number_input(
+        "最小填充塊邊長 (mm)", value=10.0,
+        min_value=1.0, max_value=500.0, step=5.0,
+        help="填充塊的寬或高任一邊小於此值就不顯示(避免列出細縫)。"
+             "提高此值只看大塊填充,降低則看到所有空隙。")
     top_n = st.number_input("顯示前幾名 (Top N)",
                             value=5, min_value=1, max_value=20, step=1)
     bcw   = st.number_input("條碼權重", value=100.0, step=10.0)
     aw    = st.number_input("面積權重", value=10.0,  step=5.0)
+
+    with st.expander("進階：重量資訊（僅用於報告）"):
+        include_weight = st.checkbox("產生報告時包含重量", value=False)
+        cwt = st.number_input("外箱重量 (kg)", value=0.0,
+                              min_value=0.0, step=0.1,
+                              disabled=not include_weight)
+        pwt = st.number_input("棧板重量 (kg)", value=0.0,
+                              min_value=0.0, step=1.0,
+                              disabled=not include_weight)
 
     st.write("")
     calc = st.button("⚡  計算", type="primary", use_container_width=True)
@@ -270,6 +284,46 @@ with k5: st.metric("條碼朝外比例", f"{chosen.barcode_exposure*100:.1f} %")
 
 
 # ---------------------------------------------------------------------------
+# Always detect filler (dunnage) voids; optionally also spread cartons so
+# the slack collects between cartons rather than at one edge.
+# ---------------------------------------------------------------------------
+
+fillers_per_layer: list = []
+if chosen.layers:
+    # User-configured minimum edge for an orderable filler block.
+    min_dim = float(min_filler_dim)
+
+    if spread_filler:
+        new_layers = []
+        for L in chosen.layers:
+            new_layers.append(spread_layer(
+                L, pallet.usable_length, pallet.usable_width,
+                ox=pallet.margin_left, oy=pallet.margin_front))
+        chosen = StackingResult(
+            carton=chosen.carton, pallet=chosen.pallet,
+            vertical_axis=chosen.vertical_axis,
+            case_dx=chosen.case_dx, case_dy=chosen.case_dy,
+            case_dz=chosen.case_dz,
+            layers=new_layers,
+            layout_name=chosen.layout_name + "+spread",
+            interlock=chosen.interlock,
+            cases_per_layer=chosen.cases_per_layer,
+            layer_count=chosen.layer_count,
+            total_cases=chosen.total_cases,
+            area_utilization=chosen.area_utilization,
+            volume_utilization=chosen.volume_utilization,
+            barcode_exposure=chosen.barcode_exposure,
+            score=chosen.score,
+        )
+
+    for L in chosen.layers:
+        fillers_per_layer.append(filler_rectangles(
+            L, pallet.usable_length, pallet.usable_width,
+            ox=pallet.margin_left, oy=pallet.margin_front,
+            min_dim=min_dim))
+
+
+# ---------------------------------------------------------------------------
 # 4-panel preview
 # ---------------------------------------------------------------------------
 
@@ -277,7 +331,8 @@ st.markdown("### 排版預覽")
 
 def _fig_top():
     fig, ax = plt.subplots(figsize=(5, 4), facecolor="white")
-    draw_top_view(ax, chosen)
+    draw_top_view(ax, chosen,
+                  fillers=fillers_per_layer[0] if fillers_per_layer else None)
     return fig
 
 def _fig_3d():
@@ -313,6 +368,55 @@ df = df[["rank", "layout", "cases_per_layer", "layer_count", "total_cases",
 df.columns = ["排名", "排版", "每層箱數", "層數", "總箱數",
               "面積 %", "體積 %", "條碼 %", "交錯", "分數"]
 st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
+# Filler (dunnage) dimensions — only when spread mode is enabled
+# ---------------------------------------------------------------------------
+
+if fillers_per_layer:
+    layer_one = fillers_per_layer[0]
+    if not layer_one:
+        st.markdown("### 填充物（dunnage）")
+        st.info(f"此堆疊內無大於 {min_dim:.0f} mm 的空隙,不需填充物。"
+                "若想看更小的空隙,請降低側欄的「最小填充塊邊長」。")
+    else:
+        st.markdown("### 填充物（dunnage）")
+        if spread_filler:
+            st.caption(f"已將外箱依比例向四周散開撐滿棧板。下表列出中間需要的"
+                       f"填充物每塊的尺寸與位置(原點 = 棧板可用區左下角)。"
+                       f"已過濾掉任一邊 < **{min_dim:.0f} mm** 的細縫,"
+                       f"可從側欄調整門檻。"
+                       f"藍色斜線區域對應俯視圖上的位置。")
+        else:
+            st.caption(f"演算法擺放後仍有空隙(常見於 pinwheel / frame 等花樣)。"
+                       f"下表列出每塊空隙的尺寸與位置;這些就是建議放填充物的"
+                       f"區塊。已過濾掉任一邊 < **{min_dim:.0f} mm** 的細縫,"
+                       f"可從側欄調整門檻。若想把空隙集中到中央,"
+                       f"請勾選左側「填充展開」。")
+
+        # Group by (width, height) so reusable sizes are obvious.
+        from collections import Counter
+        sized = [(round(w, 1), round(h, 1)) for _x, _y, w, h in layer_one]
+        counts = Counter(sized)
+        size_rows = [{
+            "尺寸 (w × h, mm)": f"{w:.1f} × {h:.1f}",
+            "面積 (mm²)":      f"{w * h:,.0f}",
+            "需要數量 (每層)":  n,
+        } for (w, h), n in sorted(counts.items(),
+                                  key=lambda kv: -kv[0][0]*kv[0][1])]
+        st.markdown("**裁料規格 (每層)**")
+        st.dataframe(pd.DataFrame(size_rows),
+                     use_container_width=True, hide_index=True)
+
+        total_area = sum(w * h for _x, _y, w, h in layer_one)
+        pallet_area = pallet.usable_length * pallet.usable_width
+        kf1, kf2, kf3 = st.columns(3)
+        with kf1: st.metric("填充塊數 (每層)", len(layer_one))
+        with kf2: st.metric("填充總面積 (每層)",
+                            f"{total_area / 1e6:.3f} m²")
+        with kf3: st.metric("填充占比",
+                            f"{total_area / pallet_area * 100:.1f} %")
 
 
 # ---------------------------------------------------------------------------
