@@ -55,16 +55,19 @@ def add_dim_arrow(ax, p0, p1, label, vertical: bool = False, offset: float = 0):
 # 3D drawing helpers
 # ---------------------------------------------------------------------------
 
-ISO_ELEV = 30.0
+# True isometric: elev = arctan(1/sqrt(2)) = 35.264 deg, azim = -45 deg.
+ISO_ELEV = 35.264
 ISO_AZIM = -45.0
 
 
 def setup_iso_axes(ax):
-    """Apply orthographic isometric projection + clean look to a 3D axis."""
-    try:
-        ax.set_proj_type("ortho")    # disable perspective
-    except Exception:
-        pass
+    """Apply orthographic isometric projection + clean look to a 3D axis.
+
+    Uses ``proj_type='ortho'`` so parallel edges in 3D stay parallel in the
+    rendered image — no perspective foreshortening. The view angle is the
+    true isometric pair (elev = atan(1/sqrt(2)) ≈ 35.264°, azim = -45°).
+    """
+    ax.set_proj_type("ortho")        # required for engineering / CAD style
     ax.view_init(elev=ISO_ELEV, azim=ISO_AZIM)
 
     # remove the grey background panes for a cleaner CAD look

@@ -139,50 +139,70 @@ def _mixed_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
 
 def _frame_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
                  face_x, face_y, face_z, axis: str = "Y") -> Optional[LayerPattern]:
-    """Frame pattern: two strips of *rotated* cartons hugging two opposing
-    pallet edges (so their barcode side faces are flush with the perimeter)
-    plus a centre band of *normal*-oriented cartons.
+    """Frame / pinwheel pattern: a strip of *rotated* cartons hugging the
+    pallet edge (so their barcode side faces sit flush with the perimeter)
+    plus the rest of the area filled with *normal*-oriented cartons.
 
-    ``axis = "Y"`` places strips along front + back (Y-edges).
-    ``axis = "X"`` places strips along left + right (X-edges).
+    Two strips (front + back, or left + right) are used only when the
+    dimensions divide cleanly so that no internal gap exposes the pallet.
+    Otherwise a single strip + centre layout is used to avoid see-through
+    gaps between rows of cartons.
 
-    Returns None when there isn't enough room for the frame.
+    Returns None when there isn't enough room for any valid frame.
     """
     placements: List[PlacedCarton] = []
 
     if axis == "Y":
-        # rotated cartons along front (y=0..dx) and back (y=usable_y-dx..usable_y)
         if dx > usable_y or dy > usable_x:
             return None
         nx_strip = int(usable_x // dy)
         if nx_strip == 0:
             return None
-        # front strip
-        for i in range(nx_strip):
-            placements.append(PlacedCarton(
-                x=ox + i * dy, y=oy, z=0.0,
-                dx=dy, dy=dx, dz=dz, rotation=1,
-                face_x=face_y, face_y=face_x, face_z=face_z))
-        # back strip (only if not overlapping)
-        if 2 * dx <= usable_y:
-            back_y = oy + usable_y - dx
+
+        # try "double strip + centre" only when the centre fits with no gap
+        centre_h_double = usable_y - 2 * dx
+        ny_centre_double = max(int(centre_h_double // dy), 0)
+        gap_double = centre_h_double - ny_centre_double * dy
+        use_double = (2 * dx <= usable_y and ny_centre_double >= 1
+                      and gap_double < 1.0)
+
+        if use_double:
+            for i in range(nx_strip):           # front strip
+                placements.append(PlacedCarton(
+                    x=ox + i * dy, y=oy, z=0.0,
+                    dx=dy, dy=dx, dz=dz, rotation=1,
+                    face_x=face_y, face_y=face_x, face_z=face_z))
+            nx_centre = int(usable_x // dx)
+            for i in range(nx_centre):          # centre band (snug)
+                for j in range(ny_centre_double):
+                    placements.append(PlacedCarton(
+                        x=ox + i * dx,
+                        y=oy + dx + j * dy, z=0.0,
+                        dx=dx, dy=dy, dz=dz, rotation=0,
+                        face_x=face_x, face_y=face_y, face_z=face_z))
+            back_y = oy + usable_y - dx         # back strip (flush)
             for i in range(nx_strip):
                 placements.append(PlacedCarton(
                     x=ox + i * dy, y=back_y, z=0.0,
                     dx=dy, dy=dx, dz=dz, rotation=1,
                     face_x=face_y, face_y=face_x, face_z=face_z))
-        # centre band (normal orientation) between front/back strips
-        centre_y0 = oy + dx
-        centre_y1 = oy + usable_y - dx
-        centre_h = centre_y1 - centre_y0
-        if centre_h >= dy:
-            nx_centre = int(usable_x // dx)
+        else:
+            # single front strip + centre fills the remaining area
+            for i in range(nx_strip):
+                placements.append(PlacedCarton(
+                    x=ox + i * dy, y=oy, z=0.0,
+                    dx=dy, dy=dx, dz=dz, rotation=1,
+                    face_x=face_y, face_y=face_x, face_z=face_z))
+            centre_h = usable_y - dx
             ny_centre = int(centre_h // dy)
+            if ny_centre == 0:
+                return None
+            nx_centre = int(usable_x // dx)
             for i in range(nx_centre):
                 for j in range(ny_centre):
                     placements.append(PlacedCarton(
                         x=ox + i * dx,
-                        y=centre_y0 + j * dy, z=0.0,
+                        y=oy + dx + j * dy, z=0.0,
                         dx=dx, dy=dy, dz=dz, rotation=0,
                         face_x=face_x, face_y=face_y, face_z=face_z))
     else:  # axis == "X"
@@ -191,31 +211,49 @@ def _frame_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
         ny_strip = int(usable_y // dy)
         if ny_strip == 0:
             return None
-        # left strip
-        for j in range(ny_strip):
-            placements.append(PlacedCarton(
-                x=ox, y=oy + j * dy, z=0.0,
-                dx=dy, dy=dx, dz=dz, rotation=1,
-                face_x=face_y, face_y=face_x, face_z=face_z))
-        # right strip
-        if 2 * dx <= usable_x:
-            right_x = ox + usable_x - dx
+
+        centre_w_double = usable_x - 2 * dx
+        nx_centre_double = max(int(centre_w_double // dx), 0)
+        gap_double = centre_w_double - nx_centre_double * dx
+        use_double = (2 * dx <= usable_x and nx_centre_double >= 1
+                      and gap_double < 1.0)
+
+        if use_double:
+            for j in range(ny_strip):           # left strip
+                placements.append(PlacedCarton(
+                    x=ox, y=oy + j * dy, z=0.0,
+                    dx=dy, dy=dx, dz=dz, rotation=1,
+                    face_x=face_y, face_y=face_x, face_z=face_z))
+            ny_centre = int(usable_y // dy)
+            for i in range(nx_centre_double):   # centre band (snug)
+                for j in range(ny_centre):
+                    placements.append(PlacedCarton(
+                        x=ox + dx + i * dx,
+                        y=oy + j * dy, z=0.0,
+                        dx=dx, dy=dy, dz=dz, rotation=0,
+                        face_x=face_x, face_y=face_y, face_z=face_z))
+            right_x = ox + usable_x - dx        # right strip (flush)
             for j in range(ny_strip):
                 placements.append(PlacedCarton(
                     x=right_x, y=oy + j * dy, z=0.0,
                     dx=dy, dy=dx, dz=dz, rotation=1,
                     face_x=face_y, face_y=face_x, face_z=face_z))
-        # centre band (normal orientation)
-        centre_x0 = ox + dx
-        centre_x1 = ox + usable_x - dx
-        centre_w  = centre_x1 - centre_x0
-        if centre_w >= dx:
+        else:
+            # single left strip + centre
+            for j in range(ny_strip):
+                placements.append(PlacedCarton(
+                    x=ox, y=oy + j * dy, z=0.0,
+                    dx=dy, dy=dx, dz=dz, rotation=1,
+                    face_x=face_y, face_y=face_x, face_z=face_z))
+            centre_w = usable_x - dx
             nx_centre = int(centre_w // dx)
+            if nx_centre == 0:
+                return None
             ny_centre = int(usable_y // dy)
             for i in range(nx_centre):
                 for j in range(ny_centre):
                     placements.append(PlacedCarton(
-                        x=centre_x0 + i * dx,
+                        x=ox + dx + i * dx,
                         y=oy + j * dy, z=0.0,
                         dx=dx, dy=dy, dz=dz, rotation=0,
                         face_x=face_x, face_y=face_y, face_z=face_z))
