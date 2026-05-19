@@ -13,6 +13,7 @@ from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg, NavigationToolbar2Tk,
 )
 
+from ..        import PALLET_PRESETS, SHIPPING_PRESETS
 from ..core    import optimize, compare_solutions
 from ..models  import Carton, Pallet, StackingResult
 from ..render  import build_overview_figure
@@ -81,11 +82,37 @@ class PalletStackingGUI(tk.Tk):
         # ---- Pallet ----
         plt_box = ttk.LabelFrame(left, text="Pallet (mm / kg)", padding=6)
         plt_box.grid(row=1, column=0, sticky="ew", pady=4)
-        self.v_pl  = _labeled_entry(plt_box, "Length",       1200, 0)
-        self.v_pw  = _labeled_entry(plt_box, "Width",        1000, 1)
-        self.v_ph  = _labeled_entry(plt_box, "Pallet H",      150, 2)
-        self.v_mh  = _labeled_entry(plt_box, "Max Total H",  1800, 3)
+
+        # pallet preset dropdown -- selecting one auto-fills L / W
+        ttk.Label(plt_box, text="Preset").grid(row=0, column=0,
+                                               sticky="w", padx=4, pady=3)
+        self.v_pallet_preset = tk.StringVar(value=list(PALLET_PRESETS.keys())[0])
+        cmb_pp = ttk.Combobox(plt_box, textvariable=self.v_pallet_preset,
+                              values=list(PALLET_PRESETS.keys()),
+                              state="readonly", width=22)
+        cmb_pp.grid(row=0, column=1, sticky="w", padx=4, pady=3)
+        cmb_pp.bind("<<ComboboxSelected>>", self._apply_pallet_preset)
+
+        self.v_pl  = _labeled_entry(plt_box, "Length",       1200, 1)
+        self.v_pw  = _labeled_entry(plt_box, "Width",        1000, 2)
+        self.v_ph  = _labeled_entry(plt_box, "Pallet H",      150, 3)
         self.v_pwt = _labeled_entry(plt_box, "Pallet Weight", 30.0, 4)
+
+        # shipping mode preset for max total height
+        ttk.Label(plt_box, text="Shipping").grid(row=5, column=0,
+                                                 sticky="w", padx=4, pady=3)
+        self.v_shipping = tk.StringVar(value=list(SHIPPING_PRESETS.keys())[0])
+        cmb_sh = ttk.Combobox(plt_box, textvariable=self.v_shipping,
+                              values=list(SHIPPING_PRESETS.keys()),
+                              state="readonly", width=22)
+        cmb_sh.grid(row=5, column=1, sticky="w", padx=4, pady=3)
+        cmb_sh.bind("<<ComboboxSelected>>", self._apply_shipping_preset)
+
+        self.v_mh  = _labeled_entry(plt_box, "Max Total H", 2200, 6)
+
+        # apply default presets once so v_pl/v_pw/v_mh match the dropdowns
+        self._apply_pallet_preset()
+        self._apply_shipping_preset()
 
         # ---- Margins ----
         mg = ttk.LabelFrame(left, text="Reserved Margins (mm)", padding=6)
@@ -147,6 +174,26 @@ class PalletStackingGUI(tk.Tk):
         ttk.Label(self, textvariable=self.status, anchor="w",
                   relief="sunken").pack(side="bottom", fill="x")
         self._render(None)
+
+    # ---------- preset handlers ----------
+    def _apply_pallet_preset(self, _evt=None):
+        """Fill Length / Width from the selected pallet preset.  'Custom'
+        leaves whatever the user has already typed."""
+        sel = self.v_pallet_preset.get()
+        dims = PALLET_PRESETS.get(sel)
+        if dims is None:
+            return
+        L, W = dims
+        self.v_pl.set(str(L))
+        self.v_pw.set(str(W))
+
+    def _apply_shipping_preset(self, _evt=None):
+        """Fill Max Total H from the selected shipping mode."""
+        sel = self.v_shipping.get()
+        max_h = SHIPPING_PRESETS.get(sel)
+        if max_h is None:
+            return
+        self.v_mh.set(str(max_h))
 
     # ---------- handlers ----------
     def _parse(self):

@@ -18,9 +18,10 @@ import json
 import sys
 from typing import Optional
 
-from .core   import optimize, compare_solutions
-from .models import Carton, Pallet
-from .export import export_pdf, export_excel
+from .        import PALLET_PRESETS, SHIPPING_PRESETS
+from .core    import optimize, compare_solutions
+from .models  import Carton, Pallet
+from .export  import export_pdf, export_excel
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -44,11 +45,18 @@ def _build_parser() -> argparse.ArgumentParser:
                         "(default L = side face).")
 
     # pallet
+    p.add_argument("--pallet-preset", choices=list(PALLET_PRESETS.keys()),
+                   default=None,
+                   help="Override --pallet-l / --pallet-w with a preset pallet.")
+    p.add_argument("--shipping", choices=list(SHIPPING_PRESETS.keys()),
+                   default=None,
+                   help="Override --max-height with the limit for a "
+                        "shipping mode (Ocean = 2200 mm, Air = 1500 mm).")
     p.add_argument("--pallet-l", type=float, default=1200)
     p.add_argument("--pallet-w", type=float, default=1000)
     p.add_argument("--pallet-h", type=float, default=150)
     p.add_argument("--pallet-weight", type=float, default=0.0)
-    p.add_argument("--max-height",    type=float, default=1800)
+    p.add_argument("--max-height",    type=float, default=2200)
     p.add_argument("--margin-front",  type=float, default=0)
     p.add_argument("--margin-back",   type=float, default=0)
     p.add_argument("--margin-left",   type=float, default=0)
@@ -70,11 +78,21 @@ def run_cli(args) -> int:
         print(f"Missing required CLI args: {missing}", file=sys.stderr)
         return 2
 
+    pl, pw, mh = args.pallet_l, args.pallet_w, args.max_height
+    if args.pallet_preset:
+        dims = PALLET_PRESETS.get(args.pallet_preset)
+        if dims:
+            pl, pw = dims
+    if args.shipping:
+        v = SHIPPING_PRESETS.get(args.shipping)
+        if v:
+            mh = v
+
     carton = Carton(length=args.case_l, width=args.case_w, height=args.case_h,
                     weight=args.case_weight, name=args.case_name,
                     barcode_face_axis=args.barcode_face)
-    pallet = Pallet(length=args.pallet_l, width=args.pallet_w,
-                    height=args.pallet_h, max_total_height=args.max_height,
+    pallet = Pallet(length=pl, width=pw,
+                    height=args.pallet_h, max_total_height=mh,
                     margin_front=args.margin_front,
                     margin_back=args.margin_back,
                     margin_left=args.margin_left,

@@ -28,3 +28,26 @@ LINE_STYLE = {
     "carton_edge":          {"linewidth": 0.35, "color": "black"},
     "dimension":            {"linewidth": 0.6, "color": "black"},
 }
+
+# ---------------------------------------------------------------------------
+# Presets (used by the GUI and the CLI)
+# ---------------------------------------------------------------------------
+
+# (label, length_mm, width_mm)
+# Note: Standard / GMA pallet uses 120 x 100 cm.
+# Euro pallet (EUR-1, ISO1) uses 120 x 80 cm.
+# Euro 2 (ISO2) uses 100 x 120 cm. The user's "Euro 100x80" is the typical
+# EUR-1 with the long side along Y.
+PALLET_PRESETS = {
+    "Standard 1200×1000 mm":  (1200, 1000),
+    "Euro EUR-1 1200×800 mm": (1200,  800),
+    "Euro 1000×800 mm":       (1000,  800),
+    "Custom":                  None,
+}
+
+# (label, max_total_height_mm)
+SHIPPING_PRESETS = {
+    "Ocean / Sea (max 2200 mm)": 2200,
+    "Air freight (max 1500 mm)": 1500,
+    "Custom":                    None,
+}
