@@ -183,11 +183,6 @@ with st.sidebar:
     mf = mb = ml = mr = safety
 
     st.markdown("### 演算法")
-    allow_interlock = st.checkbox(
-        "允許層間交錯 (interlock)", value=False,
-        help="勾選後允許層與層之間旋轉 90° 形成磚牆式錯縫,提高水平剪力穩定度。"
-             "預設關閉,因為多數產線要求每層對齊一致(裝箱機 / 真空夾爪 / 條碼"
-             "掃描位置會出問題)。需要長途海運且確認設備能處理時才打開。")
     spread_filler = st.checkbox(
         "🟦 填充展開（在箱間加緩衝物撐滿棧板）", value=False,
         help="箱數已最佳但堆疊面積偏小時,把箱子向四周散開貼齊棧板邊,"
@@ -197,12 +192,21 @@ with st.sidebar:
         min_value=1.0, max_value=500.0, step=5.0,
         help="填充塊的寬或高任一邊小於此值就不顯示(避免列出細縫)。"
              "提高此值只看大塊填充,降低則看到所有空隙。")
-    top_n = st.number_input("顯示前幾名 (Top N)",
-                            value=5, min_value=1, max_value=20, step=1)
-    bcw   = st.number_input("條碼權重", value=100.0, step=10.0)
-    aw    = st.number_input("面積權重", value=10.0,  step=5.0)
 
-    with st.expander("進階：重量資訊（僅用於報告）"):
+    with st.expander("進階選項"):
+        allow_interlock = st.checkbox(
+            "允許層間交錯 (interlock)", value=False,
+            help="勾選後允許層與層之間旋轉 90° 形成磚牆式錯縫,"
+                 "提高水平剪力穩定度。預設關閉,因為多數產線要求每層"
+                 "對齊一致(裝箱機 / 真空夾爪 / 條碼掃描位置會出問題)。"
+                 "需要長途海運且確認設備能處理時才打開。")
+        top_n = st.number_input("顯示前幾名 (Top N)",
+                                value=5, min_value=1, max_value=20, step=1)
+        bcw   = st.number_input("條碼權重", value=100.0, step=10.0)
+        aw    = st.number_input("面積權重", value=10.0,  step=5.0)
+
+        st.markdown("---")
+        st.markdown("**重量資訊（僅用於報告）**")
         include_weight = st.checkbox("產生報告時包含重量", value=False)
         cwt = st.number_input("外箱重量 (kg)", value=0.0,
                               min_value=0.0, step=0.1,
