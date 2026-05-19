@@ -177,11 +177,17 @@ def save_figure(fig, path: str, dpi: int = 220):
 
 
 def build_overview_figure(result: StackingResult, fig=None):
-    """Compose a four-panel engineering dashboard (used in GUI preview)."""
+    """Compose a four-panel engineering dashboard (used in GUI preview).
+
+    Panels: Carton orientation (3D) | Top view (one layer)
+            Front view (elevation)  | 3D pallet view
+    """
     if fig is None:
         fig = plt.figure(figsize=(11, 8.5))
-    gs = fig.add_gridspec(2, 3, width_ratios=[1, 1, 1.2],
-                          hspace=0.4, wspace=0.4)
+    gs = fig.add_gridspec(2, 2, hspace=0.4, wspace=0.4)
+
+    from .top_view  import draw_top_view
+    from .side_view import draw_front_view
 
     # carton orientation
     ax_case = fig.add_subplot(gs[0, 0], projection="3d")
@@ -193,18 +199,16 @@ def build_overview_figure(result: StackingResult, fig=None):
                                  f"{result.carton.width:.0f}×"
                                  f"{result.carton.height:.0f}"))
 
-    # 3D pallet view (full height column)
-    ax_3d = fig.add_subplot(gs[:, 2], projection="3d")
-    draw_pallet_3d(ax_3d, result)
-
-    # 2D views
-    from .top_view  import draw_top_view
-    from .side_view import draw_side_view, draw_front_view
-    ax_top   = fig.add_subplot(gs[0, 1])
+    # top view
+    ax_top = fig.add_subplot(gs[0, 1])
     draw_top_view(ax_top, result, layer_index=0)
-    ax_side  = fig.add_subplot(gs[1, 0])
-    draw_side_view(ax_side, result)
-    ax_front = fig.add_subplot(gs[1, 1])
+
+    # front view (elevation)
+    ax_front = fig.add_subplot(gs[1, 0])
     draw_front_view(ax_front, result)
+
+    # 3D pallet view
+    ax_3d = fig.add_subplot(gs[1, 1], projection="3d")
+    draw_pallet_3d(ax_3d, result)
 
     return fig

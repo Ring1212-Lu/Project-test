@@ -5,9 +5,14 @@ from dataclasses import dataclass
 
 @dataclass
 class Pallet:
-    """A pallet platform with reserved margins.
+    """A pallet platform with reserved margins and an inter-carton gap.
 
     All dimensions in mm.
+
+    ``carton_gap`` is the spacing required between adjacent cartons on
+    the same layer (and between layers).  Use it to model real-world
+    tolerances: corrugated bulge, shrink-wrap thickness, alignment
+    slop, etc.
     """
     length: float
     width:  float
@@ -17,6 +22,7 @@ class Pallet:
     margin_back:  float = 0.0
     margin_left:  float = 0.0
     margin_right: float = 0.0
+    carton_gap: float = 0.0              # mm spacing between adjacent cartons
     weight: float = 0.0                  # empty pallet weight in kg
     name: str = "Standard Pallet"
 

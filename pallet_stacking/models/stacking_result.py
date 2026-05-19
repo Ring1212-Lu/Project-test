@@ -65,7 +65,12 @@ class StackingResult:
     score: float = 0.0
 
     def total_height(self) -> float:
-        return self.pallet.height + self.layer_count * self.case_dz
+        gap = max(0.0, getattr(self.pallet, "carton_gap", 0.0))
+        if self.layer_count <= 0:
+            return self.pallet.height
+        return (self.pallet.height
+                + self.layer_count * self.case_dz
+                + max(0, self.layer_count - 1) * gap)
 
     def to_summary(self) -> dict:
         return {

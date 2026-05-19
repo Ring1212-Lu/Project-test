@@ -133,14 +133,15 @@ class PalletStackingGUI(tk.Tk):
         self._apply_pallet_preset()
         self._apply_shipping_preset()
 
-        # ---- Margins ----
-        mg = ttk.LabelFrame(left, text=" Reserved Margins (mm) ",
+        # ---- Margins + Carton gap ----
+        mg = ttk.LabelFrame(left, text=" Safety Distances (mm) ",
                             padding=(8,4), style="Card.TLabelframe")
         mg.grid(row=2, column=0, sticky="ew", pady=(0, 8))
-        self.v_mf = _labeled_entry(mg, "Front", 0, 0)
-        self.v_mb = _labeled_entry(mg, "Back",  0, 1)
-        self.v_ml = _labeled_entry(mg, "Left",  0, 2)
-        self.v_mr = _labeled_entry(mg, "Right", 0, 3)
+        self.v_mf = _labeled_entry(mg, "Edge: Front", 0, 0)
+        self.v_mb = _labeled_entry(mg, "Edge: Back",  0, 1)
+        self.v_ml = _labeled_entry(mg, "Edge: Left",  0, 2)
+        self.v_mr = _labeled_entry(mg, "Edge: Right", 0, 3)
+        self.v_gap = _labeled_entry(mg, "Carton gap",  0, 4)
 
         # ---- Algorithm ----
         opts = ttk.LabelFrame(left, text=" Algorithm ", padding=(8,4),
@@ -238,6 +239,7 @@ class PalletStackingGUI(tk.Tk):
             margin_back =_to_float(self.v_mb.get(), "margin back"),
             margin_left =_to_float(self.v_ml.get(), "margin left"),
             margin_right=_to_float(self.v_mr.get(), "margin right"),
+            carton_gap  =_to_float(self.v_gap.get(), "carton gap"),
             weight=_to_float(self.v_pwt.get(), "pallet weight"),
         )
         return (carton, pallet,

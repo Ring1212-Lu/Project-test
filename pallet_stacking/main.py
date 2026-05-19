@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Optional
 
@@ -29,6 +30,8 @@ def _build_parser() -> argparse.ArgumentParser:
                                 description="Pallet stacking optimizer")
     p.add_argument("--cli",   action="store_true",
                    help="Run headless (no GUI).")
+    p.add_argument("--web",   action="store_true",
+                   help="Launch the Streamlit web UI (Anthropic-styled).")
     p.add_argument("--pdf",   type=str, default=None,
                    help="Write a PDF report to this path.")
     p.add_argument("--excel", type=str, default=None,
@@ -61,6 +64,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--margin-back",   type=float, default=0)
     p.add_argument("--margin-left",   type=float, default=0)
     p.add_argument("--margin-right",  type=float, default=0)
+    p.add_argument("--carton-gap",    type=float, default=0,
+                   help="Inter-carton gap in mm (used both within layer and "
+                        "between layers).")
 
     # algorithm
     p.add_argument("--top-n",          type=int,   default=5)
@@ -97,6 +103,7 @@ def run_cli(args) -> int:
                     margin_back=args.margin_back,
                     margin_left=args.margin_left,
                     margin_right=args.margin_right,
+                    carton_gap=args.carton_gap,
                     weight=args.pallet_weight)
 
     sols = optimize(carton, pallet,
@@ -131,6 +138,10 @@ def main(argv: Optional[list] = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.cli:
         return run_cli(args)
+    if args.web:
+        import subprocess
+        app = os.path.join(os.path.dirname(__file__), "web", "app.py")
+        return subprocess.call(["streamlit", "run", app])
     from .gui import run
     run()
     return 0
