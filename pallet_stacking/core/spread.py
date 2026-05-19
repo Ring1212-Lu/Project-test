@@ -91,50 +91,87 @@ def spread_layer(layer: LayerPattern,
 # Filler rectangle decomposition
 # ---------------------------------------------------------------------------
 
+def _max_empty_rectangle(obstacles: List[Tuple[float, float, float, float]],
+                         x_lo: float, x_hi: float,
+                         y_lo: float, y_hi: float
+                         ) -> Tuple[float, float, float, float] | None:
+    """Largest axis-aligned rectangle inside ``[x_lo, x_hi] x [y_lo, y_hi]``
+    that does not overlap any obstacle in ``obstacles``.
+
+    Brute force over all candidate corner coordinates (carton edges +
+    bounds), pruning candidates whose bbox area cannot beat the current
+    best.  O((nx*ny)^2 * N) in the worst case; fine for the carton
+    counts we deal with (typically <= 30 obstacles, ~60 unique
+    coordinates per axis).
+    """
+    xs = {x_lo, x_hi}
+    ys = {y_lo, y_hi}
+    for ox_, oy_, ow_, oh_ in obstacles:
+        xs.add(max(x_lo, ox_));         xs.add(min(x_hi, ox_ + ow_))
+        ys.add(max(y_lo, oy_));         ys.add(min(y_hi, oy_ + oh_))
+    xs = sorted(x for x in xs if x_lo - 1e-9 <= x <= x_hi + 1e-9)
+    ys = sorted(y for y in ys if y_lo - 1e-9 <= y <= y_hi + 1e-9)
+
+    best = None
+    best_area = 0.0
+    nx = len(xs); ny = len(ys)
+    for i in range(nx - 1):
+        for j in range(i + 1, nx):
+            w = xs[j] - xs[i]
+            if w * (y_hi - y_lo) <= best_area:
+                continue        # this column can't beat best even at full height
+            for k in range(ny - 1):
+                for ll in range(k + 1, ny):
+                    h = ys[ll] - ys[k]
+                    area = w * h
+                    if area <= best_area:
+                        continue
+                    # Empty check
+                    x0_, x1_ = xs[i], xs[j]
+                    y0_, y1_ = ys[k], ys[ll]
+                    ok = True
+                    for ox_, oy_, ow_, oh_ in obstacles:
+                        if (ox_ < x1_ - 1e-9 and ox_ + ow_ > x0_ + 1e-9
+                                and oy_ < y1_ - 1e-9 and oy_ + oh_ > y0_ + 1e-9):
+                            ok = False
+                            break
+                    if ok:
+                        best_area = area
+                        best = (x0_, y0_, w, h)
+    return best
+
+
 def filler_rectangles(layer: LayerPattern,
                       usable_x: float, usable_y: float,
                       ox: float = 0.0, oy: float = 0.0,
                       min_dim: float = 1.0,
                       ) -> List[Tuple[float, float, float, float]]:
-    """Decompose the area inside ``[ox, ox+usable_x] x [oy, oy+usable_y]``
-    that is *not* covered by any carton in ``layer`` into axis-aligned
+    """Decompose the void area into the **fewest, biggest** axis-aligned
     rectangles ``(x, y, w, h)``.
 
-    Algorithm: build a horizontal-strip decomposition.  The y-axis is
-    split by every carton's top/bottom edges (plus the pallet edges).
-    Within each horizontal strip, the X-axis is the disjoint union of
-    [empty intervals] and [carton intervals]; emit one rectangle per
-    empty interval.
+    Greedy "maximum empty rectangle" extraction: repeatedly find the
+    largest empty rectangle, append it to the result, treat it as an
+    obstacle, and repeat.  This minimises the number of dunnage pieces
+    needed by maximising the size of each.
 
     Rectangles smaller than ``min_dim`` mm in either dimension are
     discarded (they're rounding noise, not orderable dunnage).
     """
-    y_edges = {oy, oy + usable_y}
-    for p in layer.placements:
-        y_edges.add(max(oy, p.y))
-        y_edges.add(min(oy + usable_y, p.y + p.dy))
-    y_sorted = sorted(e for e in y_edges if oy - 1e-6 <= e <= oy + usable_y + 1e-6)
+    obstacles: List[Tuple[float, float, float, float]] = [
+        (p.x, p.y, p.dx, p.dy) for p in layer.placements
+    ]
+    x_lo, x_hi = ox, ox + usable_x
+    y_lo, y_hi = oy, oy + usable_y
 
     rects: List[Tuple[float, float, float, float]] = []
-    x0 = ox
-    x1 = ox + usable_x
-    for y_lo, y_hi in zip(y_sorted, y_sorted[1:]):
-        h = y_hi - y_lo
-        if h < min_dim:
-            continue
-        # Collect X intervals occupied by cartons spanning this strip.
-        spans: List[Tuple[float, float]] = []
-        for p in layer.placements:
-            if p.y <= y_lo + 1e-6 and p.y + p.dy >= y_hi - 1e-6:
-                spans.append((max(x0, p.x), min(x1, p.x + p.dx)))
-        spans.sort()
-        # Walk and emit gaps.
-        cursor = x0
-        for s_lo, s_hi in spans:
-            if s_lo - cursor >= min_dim:
-                rects.append((cursor, y_lo, s_lo - cursor, h))
-            cursor = max(cursor, s_hi)
-        if x1 - cursor >= min_dim:
-            rects.append((cursor, y_lo, x1 - cursor, h))
+    # Safety cap so a malformed input can't infinite-loop.
+    for _ in range(256):
+        r = _max_empty_rectangle(obstacles, x_lo, x_hi, y_lo, y_hi)
+        if r is None:
+            break
+        if min(r[2], r[3]) < min_dim:
+            break
+        rects.append(r)
+        obstacles.append(r)
 
     return rects
