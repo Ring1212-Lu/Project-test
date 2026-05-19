@@ -137,7 +137,10 @@ st.markdown("# 📦 棧板堆疊工具")
 st.markdown('<div class="accent-rule"></div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="muted">Cape Pack 風格堆疊優化器 · '
-    'Top-5 依「總箱數 → 條碼朝外 → 面積利用率」排序</div>',
+    'Top-5 排序優先順序：'
+    '<b>總箱數</b> → <b>條碼朝外</b> → <b>面積利用率</b> → '
+    '<b>堆疊穩定度</b>（回字形 &gt; pinwheel &gt; mixed &gt; rotated &gt; 並排,'
+    ' 並可疊加 interlock 交錯）</div>',
     unsafe_allow_html=True,
 )
 st.write("")

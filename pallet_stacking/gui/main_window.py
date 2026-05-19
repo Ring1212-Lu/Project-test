@@ -69,7 +69,9 @@ class PalletStackingGUI(tk.Tk):
                   background=PALETTE["bg_root"]).pack(side="left")
         ttk.Label(header,
                   text="Cape Pack–style optimisation · Top-5 ranked by "
-                       "case count → barcode exposure → area",
+                       "case count → barcode exposure → area → "
+                       "layer stability (frame > pinwheel > mixed > "
+                       "rotated > normal, + interlock)",
                   foreground=PALETTE["text_muted"],
                   background=PALETTE["bg_root"]).pack(side="left", padx=(14, 0))
 
