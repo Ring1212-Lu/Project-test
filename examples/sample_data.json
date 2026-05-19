@@ -1,10 +1,11 @@
 {
-  "case": {
+  "carton": {
     "name": "SKU-001",
     "length_mm": 400,
     "width_mm":  300,
     "height_mm": 250,
-    "weight_kg": 8.0
+    "weight_kg": 8.0,
+    "barcode_face_axis": "L"
   },
   "pallet": {
     "name":   "EUR pallet",
@@ -12,6 +13,7 @@
     "width_mm":  1000,
     "height_mm": 150,
     "max_total_height_mm": 1800,
+    "empty_weight_kg": 30.0,
     "reserved_margin_mm": {
       "front": 10,
       "back":  10,
@@ -21,7 +23,9 @@
   },
   "algorithm": {
     "allow_interlock": true,
-    "barcode_weight": 0.15,
+    "cases_weight": 1000,
+    "barcode_weight": 100,
+    "area_weight": 10,
     "top_n": 5
   }
 }
