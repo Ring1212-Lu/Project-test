@@ -4,12 +4,10 @@ Page layout (4 zones, top-to-bottom):
 
     +--------------------------------------------------+
     | Zone 1 : Header table + Materials table          |
-    +-----------------------+--------------------------+
-    | Zone 2 : Front View   |  3D Isometric View       |
-    +-----------------------+--------------------------+
-    | Zone 3 : Top View     |  Carton Orientation View |
-    +-----------------------+--------------------------+
-    | Zone 4 : Legend + Notes + Revision               |
+    +--------------+-------------+---------------------+
+    | Zone 2 : Top View | 3D Isometric | Carton View   |
+    +--------------+-------------+---------------------+
+    | Zone 3 : Legend + Notes + Revision               |
     +--------------------------------------------------+
 
 A second page (optional) holds the Top-5 comparison table.
@@ -35,7 +33,7 @@ from ..core    import compare_solutions
 from ..models  import StackingResult
 from ..render  import (
     draw_top_view, draw_carton_orientation_view,
-    draw_front_view, draw_pallet_3d,
+    draw_pallet_3d,
 )
 from ..       import FACE_COLORS
 
@@ -147,20 +145,20 @@ def _img(figfn, *args, **kwargs) -> str:
 
 
 def _image_grid(r: StackingResult) -> Table:
-    front = _img(draw_front_view, r)
     iso3d = _img(draw_pallet_3d, r, _proj="3d")
     top   = _img(draw_top_view, r, layer_index=0)
     ori   = _img(draw_carton_orientation_view, r)
 
-    w = 85 * mm
+    w = 58 * mm
     h = 62 * mm
-    rows = [
-        [RLImage(front, width=w, height=h), RLImage(iso3d, width=w, height=h)],
-        [RLImage(top,   width=w, height=h), RLImage(ori,   width=w, height=h)],
-    ]
+    rows = [[
+        RLImage(top,   width=w, height=h),
+        RLImage(iso3d, width=w, height=h),
+        RLImage(ori,   width=w, height=h),
+    ]]
     tbl = Table(rows,
-                colWidths=[w + 4*mm, w + 4*mm],
-                rowHeights=[h + 4*mm, h + 4*mm], hAlign="LEFT")
+                colWidths=[w + 4*mm] * 3,
+                rowHeights=[h + 4*mm], hAlign="LEFT")
     tbl.setStyle(TableStyle([
         ("ALIGN",     (0, 0), (-1, -1), "CENTER"),
         ("VALIGN",    (0, 0), (-1, -1), "MIDDLE"),

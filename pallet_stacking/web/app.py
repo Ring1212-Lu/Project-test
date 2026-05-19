@@ -25,7 +25,7 @@ from pallet_stacking import PALLET_PRESETS, SHIPPING_PRESETS, FACE_COLORS
 from pallet_stacking.core   import optimize, compare_solutions
 from pallet_stacking.models import Carton, Pallet
 from pallet_stacking.render import (
-    draw_top_view, draw_front_view, draw_pallet_3d, draw_single_carton_3d,
+    draw_top_view, draw_pallet_3d, draw_single_carton_3d,
 )
 from pallet_stacking.export import export_pdf, export_excel
 
@@ -279,11 +279,6 @@ def _fig_top():
     draw_top_view(ax, chosen)
     return fig
 
-def _fig_front():
-    fig, ax = plt.subplots(figsize=(5, 4), facecolor="white")
-    draw_front_view(ax, chosen)
-    return fig
-
 def _fig_3d():
     fig = plt.figure(figsize=(5, 4), facecolor="white")
     ax = fig.add_subplot(111, projection="3d")
@@ -298,13 +293,10 @@ def _fig_carton():
                                 f"{carton.width:.0f}×{carton.height:.0f}")
     return fig
 
-col1, col2 = st.columns(2)
-with col1:
-    st.pyplot(_fig_carton(), clear_figure=True)
-    st.pyplot(_fig_front(),  clear_figure=True)
-with col2:
-    st.pyplot(_fig_top(),    clear_figure=True)
-    st.pyplot(_fig_3d(),     clear_figure=True)
+col1, col2, col3 = st.columns(3)
+with col1: st.pyplot(_fig_carton(), clear_figure=True)
+with col2: st.pyplot(_fig_top(),    clear_figure=True)
+with col3: st.pyplot(_fig_3d(),     clear_figure=True)
 
 
 # ---------------------------------------------------------------------------
