@@ -18,6 +18,7 @@ from ..core    import optimize, compare_solutions
 from ..models  import Carton, Pallet, StackingResult
 from ..render  import build_overview_figure
 from ..export  import export_pdf, export_excel
+from .theme   import apply_modern_theme, PALETTE, figure_facecolor
 
 
 # ---------------------------------------------------------------------------
@@ -26,10 +27,10 @@ from ..export  import export_pdf, export_excel
 
 def _labeled_entry(parent, label, default, row, col=0, width=12):
     ttk.Label(parent, text=label).grid(row=row, column=col,
-                                       sticky="w", padx=4, pady=3)
+                                       sticky="w", padx=4, pady=1)
     var = tk.StringVar(value=str(default))
     ent = ttk.Entry(parent, textvariable=var, width=width)
-    ent.grid(row=row, column=col + 1, sticky="w", padx=4, pady=3)
+    ent.grid(row=row, column=col + 1, sticky="w", padx=4, pady=1)
     return var
 
 
@@ -48,8 +49,10 @@ class PalletStackingGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Pallet Stacking Tool")
-        self.geometry("1220x800")
-        self.minsize(960, 700)
+        self.geometry("1280x860")
+        self.minsize(1000, 720)
+
+        apply_modern_theme(self)
 
         self.solutions: List[StackingResult] = []
         self.current: Optional[StackingResult] = None
@@ -57,14 +60,29 @@ class PalletStackingGUI(tk.Tk):
 
     # ---------- layout ----------
     def _build(self):
-        outer = ttk.Frame(self, padding=8); outer.pack(fill="both", expand=True)
+        # ---- header bar ----
+        header = ttk.Frame(self, padding=(16, 10), style="TFrame")
+        header.pack(fill="x", side="top")
+        ttk.Label(header, text="📦  Pallet Stacking Tool",
+                  font=("", 16, "bold"),
+                  foreground=PALETTE["text"],
+                  background=PALETTE["bg_root"]).pack(side="left")
+        ttk.Label(header,
+                  text="Cape Pack–style optimisation · Top-5 ranked by "
+                       "case count → barcode exposure → area",
+                  foreground=PALETTE["text_muted"],
+                  background=PALETTE["bg_root"]).pack(side="left", padx=(14, 0))
+
+        outer = ttk.Frame(self, padding=(12, 0, 12, 12))
+        outer.pack(fill="both", expand=True)
         left  = ttk.Frame(outer);  left.pack(side="left", fill="y")
-        right = ttk.Frame(outer);  right.pack(side="right", fill="both",
-                                              expand=True, padx=(8, 0))
+        right = ttk.Frame(outer, style="Card.TFrame")
+        right.pack(side="right", fill="both", expand=True, padx=(12, 0))
 
         # ---- Carton ----
-        box = ttk.LabelFrame(left, text="Carton (mm / kg)", padding=6)
-        box.grid(row=0, column=0, sticky="ew", pady=4)
+        box = ttk.LabelFrame(left, text=" Carton (mm / kg) ",
+                             padding=(8,4), style="Card.TLabelframe")
+        box.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         self.v_cl  = _labeled_entry(box, "Length (L)", 400, 0)
         self.v_cw  = _labeled_entry(box, "Width  (W)", 300, 1)
         self.v_ch  = _labeled_entry(box, "Height (H)", 250, 2)
@@ -80,8 +98,9 @@ class PalletStackingGUI(tk.Tk):
         cmb.grid(row=5, column=1, sticky="w", padx=4, pady=3)
 
         # ---- Pallet ----
-        plt_box = ttk.LabelFrame(left, text="Pallet (mm / kg)", padding=6)
-        plt_box.grid(row=1, column=0, sticky="ew", pady=4)
+        plt_box = ttk.LabelFrame(left, text=" Pallet (mm / kg) ",
+                                 padding=(8,4), style="Card.TLabelframe")
+        plt_box.grid(row=1, column=0, sticky="ew", pady=(0, 8))
 
         # pallet preset dropdown -- selecting one auto-fills L / W
         ttk.Label(plt_box, text="Preset").grid(row=0, column=0,
@@ -115,16 +134,18 @@ class PalletStackingGUI(tk.Tk):
         self._apply_shipping_preset()
 
         # ---- Margins ----
-        mg = ttk.LabelFrame(left, text="Reserved Margins (mm)", padding=6)
-        mg.grid(row=2, column=0, sticky="ew", pady=4)
+        mg = ttk.LabelFrame(left, text=" Reserved Margins (mm) ",
+                            padding=(8,4), style="Card.TLabelframe")
+        mg.grid(row=2, column=0, sticky="ew", pady=(0, 8))
         self.v_mf = _labeled_entry(mg, "Front", 0, 0)
         self.v_mb = _labeled_entry(mg, "Back",  0, 1)
         self.v_ml = _labeled_entry(mg, "Left",  0, 2)
         self.v_mr = _labeled_entry(mg, "Right", 0, 3)
 
         # ---- Algorithm ----
-        opts = ttk.LabelFrame(left, text="Algorithm", padding=6)
-        opts.grid(row=3, column=0, sticky="ew", pady=4)
+        opts = ttk.LabelFrame(left, text=" Algorithm ", padding=(8,4),
+                              style="Card.TLabelframe")
+        opts.grid(row=3, column=0, sticky="ew", pady=(0, 8))
         self.v_interlock = tk.BooleanVar(value=True)
         ttk.Checkbutton(opts, text="Allow interlock stacking",
                         variable=self.v_interlock).grid(row=0, column=0,
@@ -135,24 +156,25 @@ class PalletStackingGUI(tk.Tk):
         self.v_aw   = _labeled_entry(opts, "Area weight",    10,  3)
 
         # ---- Buttons ----
-        btns = ttk.Frame(left); btns.grid(row=4, column=0, sticky="ew", pady=8)
+        btns = ttk.Frame(left); btns.grid(row=4, column=0, sticky="ew", pady=(0, 8))
         btns.columnconfigure(0, weight=1)
-        ttk.Button(btns, text="Calculate",
+        ttk.Button(btns, text="⚡  Calculate", style="Accent.TButton",
                    command=self.on_calculate).grid(row=0, column=0,
-                                                   sticky="ew", padx=2, pady=2)
-        ttk.Button(btns, text="Preview Layout",
+                                                   sticky="ew", pady=(0, 6))
+        ttk.Button(btns, text="🔍  Preview Layout",
                    command=self.on_preview).grid(row=1, column=0,
-                                                 sticky="ew", padx=2, pady=2)
-        ttk.Button(btns, text="Export PDF...",
+                                                 sticky="ew", pady=2)
+        ttk.Button(btns, text="📄  Export PDF…",
                    command=self.on_export_pdf).grid(row=2, column=0,
-                                                    sticky="ew", padx=2, pady=2)
-        ttk.Button(btns, text="Export Excel...",
+                                                    sticky="ew", pady=2)
+        ttk.Button(btns, text="📊  Export Excel…",
                    command=self.on_export_excel).grid(row=3, column=0,
-                                                      sticky="ew", padx=2, pady=2)
+                                                      sticky="ew", pady=2)
 
         # ---- Top-N table ----
-        cmp = ttk.LabelFrame(left, text="Top Solutions", padding=4)
-        cmp.grid(row=5, column=0, sticky="nsew", pady=6)
+        cmp = ttk.LabelFrame(left, text=" Top Solutions ", padding=6,
+                             style="Card.TLabelframe")
+        cmp.grid(row=5, column=0, sticky="nsew", pady=(4, 0))
         left.rowconfigure(5, weight=1)
         cols = ("rank", "cases", "layers", "total",
                 "area%", "vol%", "bc%", "score", "layout")
@@ -166,13 +188,13 @@ class PalletStackingGUI(tk.Tk):
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
 
         # ---- Plot ----
-        self.plot_frame = ttk.Frame(right)
-        self.plot_frame.pack(fill="both", expand=True)
+        self.plot_frame = ttk.Frame(right, style="Card.TFrame")
+        self.plot_frame.pack(fill="both", expand=True, padx=8, pady=8)
 
         # ---- Status bar ----
         self.status = tk.StringVar(value="Ready.")
         ttk.Label(self, textvariable=self.status, anchor="w",
-                  relief="sunken").pack(side="bottom", fill="x")
+                  style="Status.TLabel").pack(side="bottom", fill="x")
         self._render(None)
 
     # ---------- preset handlers ----------
@@ -337,12 +359,17 @@ class PalletStackingGUI(tk.Tk):
         for w in self.plot_frame.winfo_children():
             w.destroy()
         if result is None:
-            fig = plt.figure(figsize=(8, 6))
+            fig = plt.figure(figsize=(8, 6), facecolor=figure_facecolor())
             ax = fig.add_subplot(111); ax.set_axis_off()
-            ax.text(0.5, 0.5, "Enter dimensions and press Calculate",
-                    ha="center", va="center", fontsize=14, color="gray")
+            ax.set_facecolor(figure_facecolor())
+            ax.text(0.5, 0.5,
+                    "Enter dimensions and press   ⚡  Calculate",
+                    ha="center", va="center", fontsize=14,
+                    color=PALETTE["text_muted"])
         else:
             fig = build_overview_figure(result)
+            # leave the embedded figure axes light (white axes) so the
+            # engineering drawings remain readable against the dark panel
         canvas = FigureCanvasTkAgg(fig, master=self.plot_frame); canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
         NavigationToolbar2Tk(canvas, self.plot_frame).update()
