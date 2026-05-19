@@ -125,14 +125,20 @@ def box_faces(x, y, z, dx, dy, dz,
 def draw_box_3d(ax, x, y, z, dx, dy, dz,
                 face_x_label: str = "L",
                 face_y_label: str = "W",
-                face_z_label: str = "H"):
-    """Render one carton box in engineering style (no shading, thin edges)."""
+                face_z_label: str = "H",
+                zorder: float = 1.0):
+    """Render one carton box in engineering style (no shading, thin edges).
+
+    ``zorder`` lets the caller sort the cartons back-to-front along the
+    camera direction so that closer cartons paint over farther ones.
+    """
     faces, colours = box_faces(x, y, z, dx, dy, dz,
                                face_x_label, face_y_label, face_z_label)
     coll = Poly3DCollection(
         faces, facecolors=colours,
         edgecolors="black",
-        linewidths=LINE_STYLE["carton_edge"]["linewidth"])
+        linewidths=LINE_STYLE["carton_edge"]["linewidth"],
+        zorder=zorder)
     coll.set_alpha(1.0)
     coll.set_zsort("max")
     ax.add_collection3d(coll)
@@ -154,22 +160,26 @@ def draw_wire_rect_3d(ax, p0, p1, *, linewidth=1.0, linestyle="-", color="black"
 
 
 def draw_pallet_platform_3d(ax, pallet):
-    """A simple coloured block for the pallet platform."""
+    """Render the pallet block.
+
+    Only the faces visible from the isometric camera (front -Y face and
+    right +X face) are drawn.  The top, back, left and bottom faces are
+    always hidden in this view, so omitting them sidesteps matplotlib's
+    well-known painter's-algorithm bug where large flat surfaces can
+    appear to render *through* foreground objects.
+    """
     L, W, H = pallet.length, pallet.width, pallet.height
     p = [
         (0, 0, 0), (L, 0, 0), (L, W, 0), (0, W, 0),
         (0, 0, H), (L, 0, H), (L, W, H), (0, W, H),
     ]
     faces = [
-        [p[0], p[1], p[2], p[3]],
-        [p[4], p[5], p[6], p[7]],
-        [p[0], p[1], p[5], p[4]],
-        [p[3], p[2], p[6], p[7]],
-        [p[1], p[2], p[6], p[5]],
-        [p[0], p[3], p[7], p[4]],
+        [p[0], p[1], p[5], p[4]],   # front (Y-)
+        [p[1], p[2], p[6], p[5]],   # right (X+)
     ]
     coll = Poly3DCollection(faces, facecolors="#b08454",
-                            edgecolors="black", linewidths=0.5)
+                            edgecolors="black", linewidths=0.5,
+                            zorder=0)
     coll.set_alpha(1.0)
     ax.add_collection3d(coll)
 
