@@ -33,6 +33,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pallet-l", type=float, default=1200)
     p.add_argument("--pallet-w", type=float, default=1000)
     p.add_argument("--pallet-h", type=float, default=150)
+    p.add_argument("--pallet-weight", type=float, default=0.0,
+                   help="Empty pallet weight in kg (for the Materials table)")
     p.add_argument("--max-height", type=float, default=1800)
     p.add_argument("--margin-front", type=float, default=0)
     p.add_argument("--margin-back",  type=float, default=0)
@@ -74,12 +76,13 @@ def run_cli(args) -> int:
 
     if args.pdf:
         primary = sols[0]
-        gross = primary.total_cases * case.weight
         pdf_export.export_pdf(args.pdf, primary,
                               top_solutions=sols,
                               product_name=case.name,
+                              product_code=case.name,
                               pallet_type="Standard",
-                              gross_weight=gross)
+                              pallet_weight=args.pallet_weight,
+                              load_ref=primary.layout_name)
         print(f"PDF written to {args.pdf}")
     return 0
 

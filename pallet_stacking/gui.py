@@ -241,14 +241,16 @@ class PalletStackingGUI(tk.Tk):
             return
         self.status.set("Exporting PDF...")
         self.update_idletasks()
-        gross = self.current_solution.total_cases * self.current_solution.case.weight
         try:
             pdf_export.export_pdf(
                 path, self.current_solution,
                 top_solutions=self.solutions,
                 product_name=self.current_solution.case.name,
+                product_code=self.current_solution.case.name,
                 pallet_type="Standard",
-                gross_weight=gross)
+                pallet_weight=0.0,
+                load_ref=self.current_solution.layout_name,
+                datafile_name=os.path.basename(path))
         except Exception as e:
             messagebox.showerror("PDF export failed", str(e))
             self.status.set("PDF export failed.")
