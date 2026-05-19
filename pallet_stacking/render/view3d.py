@@ -138,12 +138,14 @@ def draw_pallet_3d(ax, result: StackingResult, title: Optional[str] = None,
             color=LINE_STYLE["usable_area_outline"]["color"])
 
     total_h = result.total_height()
-    set_axes_iso(ax, pallet.length, pallet.width, total_h)
-    ax.set_xlabel("X (mm)"); ax.set_ylabel("Y (mm)"); ax.set_zlabel("Z (mm)")
+    set_axes_iso(ax, pallet.length, pallet.width, total_h, pad_factor=0.08)
+    ax.set_xlabel("X (mm)", labelpad=10)
+    ax.set_ylabel("Y (mm)", labelpad=10)
+    ax.set_zlabel("Z (mm)", labelpad=10)
     if title is None:
         title = (f"3D Isometric — {result.total_cases} cartons "
                  f"({result.layout_name})")
-    ax.set_title(title, fontsize=10)
+    ax.set_title(title, fontsize=10, pad=14)
 
 
 def draw_single_carton_3d(ax, length: float, width: float, height: float,
@@ -154,9 +156,11 @@ def draw_single_carton_3d(ax, length: float, width: float, height: float,
     setup_iso_axes(ax)
     draw_box_3d(ax, 0, 0, 0, length, width, height)
 
-    ax.set_xlabel("L (mm)"); ax.set_ylabel("W (mm)"); ax.set_zlabel("H (mm)")
-    ax.set_title(title, fontsize=10)
-    set_axes_iso(ax, length, width, height)
+    ax.set_xlabel("L (mm)", labelpad=10)
+    ax.set_ylabel("W (mm)", labelpad=10)
+    ax.set_zlabel("H (mm)", labelpad=10)
+    ax.set_title(title, fontsize=10, pad=14)
+    set_axes_iso(ax, length, width, height, pad_factor=0.10)
 
     if show_legend:
         legend = [
@@ -164,7 +168,9 @@ def draw_single_carton_3d(ax, length: float, width: float, height: float,
             Patch(facecolor=FACE_COLORS["side"],  label="Side (green)"),
             Patch(facecolor=FACE_COLORS["top"],   label="Top (orange)"),
         ]
-        ax.legend(handles=legend, loc="upper left", fontsize=7, frameon=False)
+        ax.legend(handles=legend, loc="upper left",
+                  bbox_to_anchor=(-0.05, 1.02),
+                  fontsize=7, frameon=False)
 
 
 # ---------------------------------------------------------------------------

@@ -53,14 +53,16 @@ def draw_top_view(ax, result: StackingResult, layer_index: int = 0,
                     ax.plot([p.x, p.x + p.dx], [p.y + p.dy, p.y + p.dy],
                             color=FACE_COLORS["side"], linewidth=2.2)
 
-    ax.set_xlim(-pallet.length * 0.08, pallet.length * 1.08)
-    ax.set_ylim(-pallet.width  * 0.12, pallet.width  * 1.08)
+    ax.set_xlim(-pallet.length * 0.22, pallet.length * 1.06)
+    ax.set_ylim(-pallet.width  * 0.22, pallet.width  * 1.06)
     style_axis_2d(ax,
                   title=f"Top View — Layer 1  ({result.cases_per_layer} cartons)")
+    ax.xaxis.labelpad = 8
+    ax.yaxis.labelpad = 8
 
     if show_dimensions:
-        y_off = -pallet.width * 0.06
-        x_off = -pallet.length * 0.06
+        y_off = -pallet.width  * 0.15
+        x_off = -pallet.length * 0.15
         add_dim_arrow(ax, (0, y_off), (pallet.length, y_off),
                       f"L = {pallet.length:.0f} mm")
         add_dim_arrow(ax, (x_off, 0), (x_off, pallet.width),

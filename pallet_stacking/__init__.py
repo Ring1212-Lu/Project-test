@@ -25,7 +25,7 @@ LINE_STYLE = {
     "usable_area_outline":  {"linewidth": 0.9, "color": "#555",  "linestyle": "--"},
     "reserved_margin_fill": {"facecolor": "#ffe9e1", "edgecolor": "#bb4a3a",
                              "linestyle": ":", "linewidth": 0.6, "alpha": 0.4},
-    "carton_edge":          {"linewidth": 0.35, "color": "black"},
+    "carton_edge":          {"linewidth": 0.9, "color": "black"},
     "dimension":            {"linewidth": 0.6, "color": "black"},
 }
 
