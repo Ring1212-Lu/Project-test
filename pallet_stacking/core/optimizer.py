@@ -264,6 +264,91 @@ def _frame_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
                         case_dx=dx, case_dy=dy, case_dz=dz)
 
 
+def _pinwheel_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
+                    face_x, face_y, face_z) -> Optional[LayerPattern]:
+    """4-edge pinwheel pattern (a.k.a. Cape Pack pinwheel / spinwheel).
+
+    Every perimeter carton has its barcode side facing outward:
+
+        +-------+----+----+-------+
+        |       |  F |  F |       |   L,R cols = normal cartons
+        |  L    +----+----+   R   |        -> face_x face visible
+        |       |    C    |       |   F,B rows = rotated cartons
+        |  L    +---------+   R   |        -> face_y face visible
+        |       |  B |  B |       |   C = leftover centre cartons
+        +-------+----+----+-------+
+
+    - LEFT / RIGHT strips: cartons in *normal* orientation, hugging the
+      X=0 and X=usable_x edges so that their L-normal face is at the
+      pallet boundary.
+    - FRONT / BACK strips: cartons in *rotated* orientation (90° about
+      Z), hugging the Y=0 and Y=usable_y edges so that their L-normal
+      face is at the pallet boundary.
+    - CENTRE: any remaining inner rectangle filled with normal cartons.
+
+    Returns None when the strips can't fit (the carton long side must be
+    less than half the pallet on both axes).
+    """
+    placements: List[PlacedCarton] = []
+
+    # require room for strips on opposite edges
+    if 2 * dx >= usable_x or 2 * dx >= usable_y or dy > usable_x or dy > usable_y:
+        return None
+
+    # --- LEFT + RIGHT (normal orientation) -------------------------
+    ny_lr = int(usable_y // dy)
+    if ny_lr == 0:
+        return None
+    for j in range(ny_lr):
+        placements.append(PlacedCarton(
+            x=ox, y=oy + j * dy, z=0.0,
+            dx=dx, dy=dy, dz=dz, rotation=0,
+            face_x=face_x, face_y=face_y, face_z=face_z))
+    right_x = ox + usable_x - dx
+    for j in range(ny_lr):
+        placements.append(PlacedCarton(
+            x=right_x, y=oy + j * dy, z=0.0,
+            dx=dx, dy=dy, dz=dz, rotation=0,
+            face_x=face_x, face_y=face_y, face_z=face_z))
+
+    # --- FRONT + BACK strips (rotated; in the corridor between L and R)
+    inner_x = usable_x - 2 * dx
+    nx_fb = int(inner_x // dy)
+    for i in range(nx_fb):
+        placements.append(PlacedCarton(
+            x=ox + dx + i * dy, y=oy, z=0.0,
+            dx=dy, dy=dx, dz=dz, rotation=1,
+            face_x=face_y, face_y=face_x, face_z=face_z))
+    back_y = oy + usable_y - dx
+    for i in range(nx_fb):
+        placements.append(PlacedCarton(
+            x=ox + dx + i * dy, y=back_y, z=0.0,
+            dx=dy, dy=dx, dz=dz, rotation=1,
+            face_x=face_y, face_y=face_x, face_z=face_z))
+
+    # --- CENTRE: fill the inner rectangle with normal cartons ------
+    cx0 = ox + dx
+    cx1 = ox + usable_x - dx
+    cy0 = oy + dx
+    cy1 = oy + usable_y - dx
+    cw  = cx1 - cx0
+    ch  = cy1 - cy0
+    if cw >= dx and ch >= dy:
+        nx_c = int(cw // dx)
+        ny_c = int(ch // dy)
+        for i in range(nx_c):
+            for j in range(ny_c):
+                placements.append(PlacedCarton(
+                    x=cx0 + i * dx, y=cy0 + j * dy, z=0.0,
+                    dx=dx, dy=dy, dz=dz, rotation=0,
+                    face_x=face_x, face_y=face_y, face_z=face_z))
+
+    if not placements:
+        return None
+    return LayerPattern(placements=placements, pattern_name="pinwheel",
+                        case_dx=dx, case_dy=dy, case_dz=dz)
+
+
 def _interlock_partner(base_layer: LayerPattern,
                        usable_x, usable_y, ox, oy,
                        face_x, face_y, face_z) -> Optional[LayerPattern]:
@@ -340,13 +425,18 @@ def optimize(carton: Carton, pallet: Pallet,
         if dx <= usable_x and dy <= usable_y:
             variants.append(("mixed",
                 _mixed_layer(dx, dy, dz, usable_x, usable_y, ox, oy, fx, fy, fz)))
-        # Frame / pinwheel-style: rotated cartons on perimeter,
-        # normal cartons in the middle - boosts barcode side-out exposure.
+        # Frame: rotated cartons on one pair of opposite edges + centre.
         for axis in ("Y", "X"):
             frame = _frame_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
                                  fx, fy, fz, axis=axis)
             if frame is not None:
                 variants.append((f"frame-{axis}", frame))
+        # 4-edge pinwheel: cartons on every pallet edge - maximises
+        # barcode side-out exposure.
+        pinwheel = _pinwheel_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
+                                   fx, fy, fz)
+        if pinwheel is not None:
+            variants.append(("pinwheel", pinwheel))
 
         for layout_name, layer in variants:
             if layer.count == 0:
