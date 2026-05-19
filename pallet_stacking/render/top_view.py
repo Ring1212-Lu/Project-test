@@ -20,12 +20,17 @@ def draw_top_view(ax, result: StackingResult, layer_index: int = 0,
     pallet = result.pallet
     draw_pallet_outline_2d(ax, pallet, show_margin=True)
 
+    AXIS_TO_ROLE = {"L": "side", "W": "front", "H": "top"}
     if 0 <= layer_index < len(result.layers):
         layer = result.layers[layer_index]
         for p in layer.placements:
+            # Top view shows the upward-facing case-local face.  Colour by
+            # which case axis is vertical, so the same case face keeps the
+            # same colour across orientations.
+            face_color = FACE_COLORS[AXIS_TO_ROLE.get(p.face_z, "top")]
             ax.add_patch(Rectangle(
                 (p.x, p.y), p.dx, p.dy,
-                facecolor=FACE_COLORS["top"],
+                facecolor=face_color,
                 edgecolor=LINE_STYLE["carton_edge"]["color"],
                 linewidth=LINE_STYLE["carton_edge"]["linewidth"]))
             if p.barcode_visible:

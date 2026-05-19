@@ -137,6 +137,95 @@ def _mixed_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
         dx, dy, dz, usable_x, usable_y, ox, oy, face_x, face_y, face_z)
 
 
+def _frame_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
+                 face_x, face_y, face_z, axis: str = "Y") -> Optional[LayerPattern]:
+    """Frame pattern: two strips of *rotated* cartons hugging two opposing
+    pallet edges (so their barcode side faces are flush with the perimeter)
+    plus a centre band of *normal*-oriented cartons.
+
+    ``axis = "Y"`` places strips along front + back (Y-edges).
+    ``axis = "X"`` places strips along left + right (X-edges).
+
+    Returns None when there isn't enough room for the frame.
+    """
+    placements: List[PlacedCarton] = []
+
+    if axis == "Y":
+        # rotated cartons along front (y=0..dx) and back (y=usable_y-dx..usable_y)
+        if dx > usable_y or dy > usable_x:
+            return None
+        nx_strip = int(usable_x // dy)
+        if nx_strip == 0:
+            return None
+        # front strip
+        for i in range(nx_strip):
+            placements.append(PlacedCarton(
+                x=ox + i * dy, y=oy, z=0.0,
+                dx=dy, dy=dx, dz=dz, rotation=1,
+                face_x=face_y, face_y=face_x, face_z=face_z))
+        # back strip (only if not overlapping)
+        if 2 * dx <= usable_y:
+            back_y = oy + usable_y - dx
+            for i in range(nx_strip):
+                placements.append(PlacedCarton(
+                    x=ox + i * dy, y=back_y, z=0.0,
+                    dx=dy, dy=dx, dz=dz, rotation=1,
+                    face_x=face_y, face_y=face_x, face_z=face_z))
+        # centre band (normal orientation) between front/back strips
+        centre_y0 = oy + dx
+        centre_y1 = oy + usable_y - dx
+        centre_h = centre_y1 - centre_y0
+        if centre_h >= dy:
+            nx_centre = int(usable_x // dx)
+            ny_centre = int(centre_h // dy)
+            for i in range(nx_centre):
+                for j in range(ny_centre):
+                    placements.append(PlacedCarton(
+                        x=ox + i * dx,
+                        y=centre_y0 + j * dy, z=0.0,
+                        dx=dx, dy=dy, dz=dz, rotation=0,
+                        face_x=face_x, face_y=face_y, face_z=face_z))
+    else:  # axis == "X"
+        if dy > usable_x or dx > usable_y:
+            return None
+        ny_strip = int(usable_y // dy)
+        if ny_strip == 0:
+            return None
+        # left strip
+        for j in range(ny_strip):
+            placements.append(PlacedCarton(
+                x=ox, y=oy + j * dy, z=0.0,
+                dx=dy, dy=dx, dz=dz, rotation=1,
+                face_x=face_y, face_y=face_x, face_z=face_z))
+        # right strip
+        if 2 * dx <= usable_x:
+            right_x = ox + usable_x - dx
+            for j in range(ny_strip):
+                placements.append(PlacedCarton(
+                    x=right_x, y=oy + j * dy, z=0.0,
+                    dx=dy, dy=dx, dz=dz, rotation=1,
+                    face_x=face_y, face_y=face_x, face_z=face_z))
+        # centre band (normal orientation)
+        centre_x0 = ox + dx
+        centre_x1 = ox + usable_x - dx
+        centre_w  = centre_x1 - centre_x0
+        if centre_w >= dx:
+            nx_centre = int(centre_w // dx)
+            ny_centre = int(usable_y // dy)
+            for i in range(nx_centre):
+                for j in range(ny_centre):
+                    placements.append(PlacedCarton(
+                        x=centre_x0 + i * dx,
+                        y=oy + j * dy, z=0.0,
+                        dx=dx, dy=dy, dz=dz, rotation=0,
+                        face_x=face_x, face_y=face_y, face_z=face_z))
+
+    if not placements:
+        return None
+    return LayerPattern(placements=placements, pattern_name=f"frame-{axis}",
+                        case_dx=dx, case_dy=dy, case_dz=dz)
+
+
 def _interlock_partner(base_layer: LayerPattern,
                        usable_x, usable_y, ox, oy,
                        face_x, face_y, face_z) -> Optional[LayerPattern]:
@@ -213,6 +302,13 @@ def optimize(carton: Carton, pallet: Pallet,
         if dx <= usable_x and dy <= usable_y:
             variants.append(("mixed",
                 _mixed_layer(dx, dy, dz, usable_x, usable_y, ox, oy, fx, fy, fz)))
+        # Frame / pinwheel-style: rotated cartons on perimeter,
+        # normal cartons in the middle - boosts barcode side-out exposure.
+        for axis in ("Y", "X"):
+            frame = _frame_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
+                                 fx, fy, fz, axis=axis)
+            if frame is not None:
+                variants.append((f"frame-{axis}", frame))
 
         for layout_name, layer in variants:
             if layer.count == 0:

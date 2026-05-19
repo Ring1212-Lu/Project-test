@@ -75,14 +75,28 @@ def setup_iso_axes(ax):
     ax.grid(True, linewidth=0.3, linestyle=":", color="#cccccc")
 
 
-def box_faces(x, y, z, dx, dy, dz):
+def box_faces(x, y, z, dx, dy, dz,
+              face_x_label: str = "L",
+              face_y_label: str = "W",
+              face_z_label: str = "H"):
     """Return (faces, colours) for one carton box.
 
-    Colour mapping is fixed by *pallet* axis (not case-local):
-        - Faces normal to Z (top/bottom) -> ``FACE_COLORS["top"]``    (orange)
-        - Faces normal to Y (front/back) -> ``FACE_COLORS["front"]``  (blue)
-        - Faces normal to X (left/right) -> ``FACE_COLORS["side"]``   (green)
+    Colour is fixed by which **case-local axis** is normal to each face,
+    so that the carton's own front / side / top face keeps its colour
+    regardless of how the carton is rotated on the pallet:
+
+        case axis "L" -> "side"  face (green)
+        case axis "W" -> "front" face (blue)
+        case axis "H" -> "top"   face (orange)
+
+    The ``face_*_label`` arguments tell which case-local axis is normal
+    to each world axis after placement.
     """
+    AXIS_TO_ROLE = {"L": "side", "W": "front", "H": "top"}
+    color_x = FACE_COLORS[AXIS_TO_ROLE[face_x_label]]
+    color_y = FACE_COLORS[AXIS_TO_ROLE[face_y_label]]
+    color_z = FACE_COLORS[AXIS_TO_ROLE[face_z_label]]
+
     p = [
         (x,    y,    z),
         (x+dx, y,    z),
@@ -94,24 +108,24 @@ def box_faces(x, y, z, dx, dy, dz):
         (x,    y+dy, z+dz),
     ]
     faces = [
-        [p[0], p[1], p[2], p[3]],   # bottom
-        [p[4], p[5], p[6], p[7]],   # top
-        [p[0], p[1], p[5], p[4]],   # front (-Y)
-        [p[3], p[2], p[6], p[7]],   # back  (+Y)
-        [p[1], p[2], p[6], p[5]],   # right (+X)
-        [p[0], p[3], p[7], p[4]],   # left  (-X)
+        [p[0], p[1], p[2], p[3]],   # bottom (Z-)
+        [p[4], p[5], p[6], p[7]],   # top    (Z+)
+        [p[0], p[1], p[5], p[4]],   # front  (Y-)
+        [p[3], p[2], p[6], p[7]],   # back   (Y+)
+        [p[1], p[2], p[6], p[5]],   # right  (X+)
+        [p[0], p[3], p[7], p[4]],   # left   (X-)
     ]
-    colours = [
-        FACE_COLORS["top"],   FACE_COLORS["top"],
-        FACE_COLORS["front"], FACE_COLORS["front"],
-        FACE_COLORS["side"],  FACE_COLORS["side"],
-    ]
+    colours = [color_z, color_z, color_y, color_y, color_x, color_x]
     return faces, colours
 
 
-def draw_box_3d(ax, x, y, z, dx, dy, dz):
+def draw_box_3d(ax, x, y, z, dx, dy, dz,
+                face_x_label: str = "L",
+                face_y_label: str = "W",
+                face_z_label: str = "H"):
     """Render one carton box in engineering style (no shading, thin edges)."""
-    faces, colours = box_faces(x, y, z, dx, dy, dz)
+    faces, colours = box_faces(x, y, z, dx, dy, dz,
+                               face_x_label, face_y_label, face_z_label)
     coll = Poly3DCollection(
         faces, facecolors=colours,
         edgecolors="black",
@@ -157,10 +171,17 @@ def draw_pallet_platform_3d(ax, pallet):
     ax.add_collection3d(coll)
 
 
-def set_axes_iso(ax, x_max, y_max, z_max, pad_factor: float = 1.05):
-    m = max(x_max, y_max, z_max) * pad_factor
-    ax.set_xlim(0, m); ax.set_ylim(0, m); ax.set_zlim(0, m)
-    ax.set_box_aspect((m, m, m))
+def set_axes_iso(ax, x_max, y_max, z_max, pad_factor: float = 0.05):
+    """Use the actual dimensions for the axis ranges and ``box_aspect`` so
+    the carton stack visually aligns with the pallet base (no stretched cube).
+    """
+    pad_x = x_max * pad_factor
+    pad_y = y_max * pad_factor
+    pad_z = z_max * pad_factor
+    ax.set_xlim(-pad_x, x_max + pad_x)
+    ax.set_ylim(-pad_y, y_max + pad_y)
+    ax.set_zlim(0,       z_max + pad_z)
+    ax.set_box_aspect((x_max, y_max, z_max))
 
 
 def style_axis_2d(ax, *, title: str = "", xlabel: str = "X (mm)",

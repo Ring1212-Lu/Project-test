@@ -41,7 +41,11 @@ def draw_pallet_3d(ax, result: StackingResult, title: Optional[str] = None,
 
     for layer in result.layers:
         for p in layer.placements:
-            draw_box_3d(ax, p.x, p.y, pallet.height + p.z, p.dx, p.dy, p.dz)
+            draw_box_3d(ax, p.x, p.y, pallet.height + p.z,
+                        p.dx, p.dy, p.dz,
+                        face_x_label=p.face_x,
+                        face_y_label=p.face_y,
+                        face_z_label=p.face_z)
 
     total_h = result.total_height()
     set_axes_iso(ax, pallet.length, pallet.width, total_h)
