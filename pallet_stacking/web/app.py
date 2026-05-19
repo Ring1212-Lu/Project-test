@@ -137,10 +137,11 @@ st.markdown("# 📦 棧板堆疊工具")
 st.markdown('<div class="accent-rule"></div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="muted">Cape Pack 風格堆疊優化器 · '
+    '<b>每層對齊一致</b>(預設不開啟 interlock 交錯) · '
     'Top-5 排序優先順序：'
     '<b>總箱數</b> → <b>條碼朝外</b> → <b>面積利用率</b> → '
-    '<b>堆疊穩定度</b>（回字形 &gt; pinwheel &gt; mixed &gt; rotated &gt; 並排,'
-    ' 並可疊加 interlock 交錯）</div>',
+    '<b>堆疊穩定度</b>（回字形 &gt; pinwheel &gt; mixed &gt; rotated &gt; 並排）'
+    '</div>',
     unsafe_allow_html=True,
 )
 st.write("")
@@ -182,7 +183,11 @@ with st.sidebar:
     mf = mb = ml = mr = safety
 
     st.markdown("### 演算法")
-    allow_interlock = st.checkbox("允許交錯堆疊 (interlock)", value=True)
+    allow_interlock = st.checkbox(
+        "允許層間交錯 (interlock)", value=False,
+        help="勾選後允許層與層之間旋轉 90° 形成磚牆式錯縫,提高水平剪力穩定度。"
+             "預設關閉,因為多數產線要求每層對齊一致(裝箱機 / 真空夾爪 / 條碼"
+             "掃描位置會出問題)。需要長途海運且確認設備能處理時才打開。")
     spread_filler = st.checkbox(
         "🟦 填充展開（在箱間加緩衝物撐滿棧板）", value=False,
         help="箱數已最佳但堆疊面積偏小時,把箱子向四周散開貼齊棧板邊,"

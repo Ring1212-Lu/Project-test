@@ -70,7 +70,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # algorithm
     p.add_argument("--top-n",          type=int,   default=5)
-    p.add_argument("--no-interlock",   action="store_true")
+    p.add_argument("--interlock",      action="store_true",
+                   help="Enable layer-to-layer 90 degrees interlock "
+                        "(disabled by default; each layer is identical).")
     p.add_argument("--barcode-weight", type=float, default=100.0)
     p.add_argument("--area-weight",    type=float, default=10.0)
     p.add_argument("--cases-weight",   type=float, default=1000.0)
@@ -116,7 +118,7 @@ def run_cli(args) -> int:
 
     sols = optimize(carton, pallet,
                     top_n=args.top_n,
-                    allow_interlock=not args.no_interlock,
+                    allow_interlock=args.interlock,
                     cases_weight=args.cases_weight,
                     barcode_weight=args.barcode_weight,
                     area_weight=args.area_weight)
