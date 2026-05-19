@@ -222,17 +222,18 @@ def _frame_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
                         dx=dx, dy=dy, dz=dz, rotation=0,
                         face_x=face_x, face_y=face_y, face_z=face_z))
     else:  # axis == "X"
+        # Left/right strips contain *rotated* cartons whose width is dy.
         if dy > usable_x or dx > usable_y:
             return None
         ny_strip = int((usable_y + gap) // sy_r) if sy_r > 0 else 0
         if ny_strip == 0:
             return None
 
-        centre_w_double = usable_x - 2 * dx - gap
+        centre_w_double = usable_x - 2 * dy - gap
         nx_centre_double = max(int((centre_w_double + gap) // sx_n), 0) if sx_n > 0 else 0
         residual = centre_w_double - (nx_centre_double * dx
                                        + max(0, nx_centre_double - 1) * gap)
-        use_double = (2 * dx + gap <= usable_x and nx_centre_double >= 1
+        use_double = (2 * dy + gap <= usable_x and nx_centre_double >= 1
                       and residual < 1.0)
 
         if use_double:
@@ -245,11 +246,11 @@ def _frame_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
             for i in range(nx_centre_double):
                 for j in range(ny_centre):
                     placements.append(PlacedCarton(
-                        x=ox + dx + gap + i * sx_n,
+                        x=ox + dy + gap + i * sx_n,
                         y=oy + j * sy_n, z=0.0,
                         dx=dx, dy=dy, dz=dz, rotation=0,
                         face_x=face_x, face_y=face_y, face_z=face_z))
-            right_x = ox + usable_x - dx
+            right_x = ox + usable_x - dy
             for j in range(ny_strip):
                 placements.append(PlacedCarton(
                     x=right_x, y=oy + j * sy_r, z=0.0,
@@ -261,7 +262,7 @@ def _frame_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
                     x=ox, y=oy + j * sy_r, z=0.0,
                     dx=dy, dy=dx, dz=dz, rotation=1,
                     face_x=face_y, face_y=face_x, face_z=face_z))
-            centre_w = usable_x - dx - gap
+            centre_w = usable_x - dy - gap
             nx_centre = int((centre_w + gap) // sx_n) if sx_n > 0 else 0
             if nx_centre == 0:
                 return None
@@ -269,7 +270,7 @@ def _frame_layer(dx, dy, dz, usable_x, usable_y, ox, oy,
             for i in range(nx_centre):
                 for j in range(ny_centre):
                     placements.append(PlacedCarton(
-                        x=ox + dx + gap + i * sx_n,
+                        x=ox + dy + gap + i * sx_n,
                         y=oy + j * sy_n, z=0.0,
                         dx=dx, dy=dy, dz=dz, rotation=0,
                         face_x=face_x, face_y=face_y, face_z=face_z))

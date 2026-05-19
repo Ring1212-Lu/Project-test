@@ -20,7 +20,7 @@ import sys
 from typing import Optional
 
 from .        import PALLET_PRESETS, SHIPPING_PRESETS
-from .core    import optimize, compare_solutions
+from .core    import optimize, compare_solutions, verify_layer
 from .models  import Carton, Pallet
 from .export  import export_pdf, export_excel
 
@@ -74,6 +74,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--barcode-weight", type=float, default=100.0)
     p.add_argument("--area-weight",    type=float, default=10.0)
     p.add_argument("--cases-weight",   type=float, default=1000.0)
+
+    # verification
+    p.add_argument("--verify", action="store_true",
+                   help="After solving, ask CP-SAT to prove the per-layer "
+                        "count is the global optimum (no other arrangement "
+                        "fits more cartons).")
+    p.add_argument("--verify-time", type=float, default=120.0,
+                   help="Time budget (s) for the verifier. Default 120.")
     return p
 
 
@@ -120,6 +128,20 @@ def run_cli(args) -> int:
     print(json.dumps(rows, indent=2))
 
     primary = sols[0]
+    if args.verify:
+        print(f"\nVerifying per-layer optimality "
+              f"(time budget {args.verify_time:.0f}s) …")
+        vr = verify_layer(primary, pallet, time_limit=args.verify_time)
+        verdict = ("OPTIMAL" if vr.optimal is True else
+                   "SUB-OPTIMAL" if vr.optimal is False else "UNKNOWN")
+        print(f"  optimizer    : {vr.optimizer_count} cartons/layer")
+        print(f"  exact        : "
+              f"{vr.exact_count if vr.exact_count is not None else '—'} "
+              f"cartons/layer")
+        print(f"  area upper   : {vr.area_upper_bound}")
+        print(f"  status       : {vr.status}  ({vr.wall_s:.1f}s)")
+        print(f"  verdict      : {verdict}")
+
     if args.pdf:
         export_pdf(args.pdf, primary, top_solutions=sols,
                    product_name=carton.name, product_code=carton.name,

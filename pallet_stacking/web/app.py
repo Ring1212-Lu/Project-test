@@ -22,7 +22,9 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 from pallet_stacking import PALLET_PRESETS, SHIPPING_PRESETS, FACE_COLORS
-from pallet_stacking.core   import optimize, compare_solutions
+from pallet_stacking.core   import (
+    optimize, compare_solutions, verify_layer, area_upper_bound,
+)
 from pallet_stacking.models import Carton, Pallet
 from pallet_stacking.render import (
     draw_top_view, draw_pallet_3d, draw_single_carton_3d,
@@ -312,6 +314,54 @@ df = df[["rank", "layout", "cases_per_layer", "layer_count", "total_cases",
 df.columns = ["Rank", "Layout", "Cases/Layer", "Layers", "Total",
               "Area %", "Volume %", "Barcode %", "Interlock", "Score"]
 st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
+# Optimality verification (CP-SAT)
+# ---------------------------------------------------------------------------
+
+st.markdown("### Verify optimality")
+st.caption("Checks whether the **selected** solution's cases-per-layer is the "
+           "true maximum for its footprint — by running an independent "
+           "constraint-programming solver. UNSAT proves optimality.")
+v1, v2, v3 = st.columns([1, 1, 2])
+with v1:
+    st.metric("Selected", f"{chosen.cases_per_layer} / layer")
+with v2:
+    st.metric("Area upper bound",
+              f"{area_upper_bound((chosen.case_dx, chosen.case_dy), pallet)} "
+              f"/ layer")
+with v3:
+    budget = st.number_input("Time budget (s)", value=60.0,
+                             min_value=5.0, max_value=600.0, step=5.0)
+    run_verify = st.button("🔍 Prove optimality (CP-SAT)",
+                           use_container_width=True)
+
+if run_verify:
+    with st.spinner("Running constraint-programming solver …"):
+        vr = verify_layer(chosen, pallet, time_limit=float(budget))
+    if vr.optimal is True:
+        st.success(
+            f"**Proven optimal.** No arrangement of {vr.optimizer_count + 1} "
+            f"cartons of footprint "
+            f"{chosen.case_dx:.0f} × {chosen.case_dy:.0f} fits on this "
+            f"pallet. Status: `{vr.status}` "
+            f"(solved in {vr.wall_s:.1f} s)."
+        )
+    elif vr.optimal is False:
+        st.error(
+            f"**Sub-optimal!** Solver found a layout that fits "
+            f"{vr.exact_count} cartons/layer — the heuristic missed "
+            f"{vr.exact_count - vr.optimizer_count}. Status: `{vr.status}`."
+        )
+    else:
+        st.warning(
+            f"**Inconclusive.** Solver timed out trying to fit "
+            f"{vr.optimizer_count + 1} cartons. The heuristic's "
+            f"{vr.optimizer_count} is feasible but may or may not be the "
+            f"global max — re-run with a larger budget. Status: "
+            f"`{vr.status}`."
+        )
 
 
 # ---------------------------------------------------------------------------
