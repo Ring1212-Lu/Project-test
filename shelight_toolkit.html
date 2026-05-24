@@ -1050,78 +1050,156 @@ function copyPost() {
 // ══════════════════════════════
 // AVATAR MAKER
 // ══════════════════════════════
+// 每種風格：base 中心底色、edge 邊緣底色、core 內透光核、blooms 偏心彩光、
+// prism 虹彩稜光強度、vig 邊緣暗角（製造「光從內透出」的縱深）
 const AV_STYLES = {
-  warm:  [[255,224,160],[252,190,168],[200,224,200],[244,204,170]],
-  pink:  [[255,200,210],[248,170,188],[220,190,230],[200,220,200]],
-  multi: [[255,216,148],[248,176,190],[240,158,128],[180,216,182]],
-  pure:  [[255,248,235],[255,240,220],[248,235,210],[240,230,210]],
+  warm: {
+    base:[250,240,226], edge:[224,202,176], core:[255,250,242],
+    blooms:[
+      {x:0.30,y:0.26,r:0.62,c:[255,224,168],a:0.60},
+      {x:0.76,y:0.22,r:0.56,c:[255,198,158],a:0.46},
+      {x:0.22,y:0.78,r:0.58,c:[250,212,182],a:0.44},
+      {x:0.80,y:0.74,r:0.54,c:[244,222,176],a:0.42},
+    ],
+    prism:0.10, vig:[140,108,74,0.34],
+  },
+  pink: {
+    base:[252,240,240], edge:[228,198,206], core:[255,248,248],
+    blooms:[
+      {x:0.30,y:0.26,r:0.62,c:[255,200,212],a:0.58},
+      {x:0.76,y:0.22,r:0.56,c:[248,176,196],a:0.46},
+      {x:0.22,y:0.78,r:0.58,c:[240,196,224],a:0.44},
+      {x:0.80,y:0.74,r:0.54,c:[210,200,236],a:0.40},
+    ],
+    prism:0.13, vig:[150,110,120,0.30],
+  },
+  multi: {
+    base:[248,242,238], edge:[214,200,200], core:[255,250,246],
+    blooms:[
+      {x:0.28,y:0.24,r:0.62,c:[255,216,150],a:0.55},
+      {x:0.78,y:0.22,r:0.56,c:[252,176,192],a:0.50},
+      {x:0.22,y:0.78,r:0.58,c:[180,222,196],a:0.48},
+      {x:0.80,y:0.76,r:0.54,c:[196,200,240],a:0.46},
+    ],
+    prism:0.20, vig:[140,118,110,0.30],
+  },
+  pure: {
+    base:[252,248,242], edge:[226,216,202], core:[255,255,252],
+    blooms:[
+      {x:0.30,y:0.26,r:0.62,c:[255,246,228],a:0.55},
+      {x:0.76,y:0.22,r:0.56,c:[252,240,224],a:0.45},
+      {x:0.22,y:0.78,r:0.58,c:[244,238,228],a:0.42},
+      {x:0.80,y:0.74,r:0.54,c:[255,250,236],a:0.42},
+    ],
+    prism:0.11, vig:[150,135,110,0.26],
+  },
 };
+
+// 虹彩稜光色序（粉→蜜桃→金→薄荷→薰衣草）
+const PRISM_STOPS = [[255,180,205],[255,212,172],[255,242,194],[188,236,206],[202,206,246]];
 
 function drawAvatarCanvas(canvas, style, text) {
   const ctx = canvas.getContext('2d');
   const S = canvas.width;
-  const cx = S/2, cy = S/2;
+  const cx = S/2, cy = S/2, R = S/2 - 1;
   ctx.clearRect(0,0,S,S);
 
   ctx.save();
   ctx.beginPath();
-  ctx.arc(cx,cy,S/2-1,0,Math.PI*2);
+  ctx.arc(cx,cy,R,0,Math.PI*2);
   ctx.clip();
 
-  // 底色
-  ctx.fillStyle = '#fefcf8';
+  const st = AV_STYLES[style] || AV_STYLES.warm;
+  const mix = (a,b,t) => a.map((v,i)=>Math.round(v+(b[i]-v)*t)).join(',');
+
+  // 底色：偏心亮點 → 較深邊緣，先建立縱深（光營造空間感）
+  const base = ctx.createRadialGradient(cx*0.84, cy*0.76, 0, cx, cy, S*0.68);
+  base.addColorStop(0,    `rgb(${st.base.join(',')})`);
+  base.addColorStop(0.52, `rgb(${mix(st.base, st.edge, 0.35)})`);
+  base.addColorStop(1,    `rgb(${st.edge.join(',')})`);
+  ctx.fillStyle = base;
   ctx.fillRect(0,0,S,S);
 
-  // 邊緣漸暗——製造空間深度
-  const vignette = ctx.createRadialGradient(cx,cy,S*0.25,cx,cy,S*0.5);
-  vignette.addColorStop(0,   'rgba(253,248,242,1)');
-  vignette.addColorStop(0.6, 'rgba(248,240,230,1)');
-  vignette.addColorStop(0.85,'rgba(238,228,215,1)');
-  vignette.addColorStop(1,   'rgba(225,212,198,1)');
-  ctx.fillStyle = vignette;
-  ctx.fillRect(0,0,S,S);
-
-  // 四個偏心光源——關鍵：位置不在中心，互相融合後沒有單一中心
-  const colors = AV_STYLES[style];
-  const sources = [
-    { x:S*0.28, y:S*0.25, r:S*0.55, ci:0 },
-    { x:S*0.76, y:S*0.22, r:S*0.52, ci:1 },
-    { x:S*0.24, y:S*0.78, r:S*0.50, ci:2 },
-    { x:S*0.74, y:S*0.76, r:S*0.50, ci:3 },
-  ];
-
-  sources.forEach(src => {
-    const [r,g,b] = colors[src.ci];
-    const grad = ctx.createRadialGradient(src.x,src.y,0,src.x,src.y,src.r);
-    grad.addColorStop(0,   `rgba(${r},${g},${b},0.22)`);
-    grad.addColorStop(0.35,`rgba(${r},${g},${b},0.12)`);
-    grad.addColorStop(0.65,`rgba(${r},${g},${b},0.04)`);
-    grad.addColorStop(1,   `rgba(${r},${g},${b},0)`);
-    ctx.fillStyle = grad;
+  // ── 偏心彩光：加色混合但放輕，融合後無單一中心 ──
+  ctx.globalCompositeOperation = 'lighter';
+  st.blooms.forEach(b => {
+    const a = b.a * 0.55;
+    const g = ctx.createRadialGradient(S*b.x, S*b.y, 0, S*b.x, S*b.y, S*b.r);
+    g.addColorStop(0,    `rgba(${b.c.join(',')},${a.toFixed(3)})`);
+    g.addColorStop(0.40, `rgba(${b.c.join(',')},${(a*0.4).toFixed(3)})`);
+    g.addColorStop(1,    `rgba(${b.c.join(',')},0)`);
+    ctx.fillStyle = g;
     ctx.fillRect(0,0,S,S);
   });
 
-  // 第五個光源：正中間極淡——讓整體微微透亮
-  const mid = ctx.createRadialGradient(cx,cy*0.95,0,cx,cy,S*0.42);
-  mid.addColorStop(0,   'rgba(255,248,235,0.18)');
-  mid.addColorStop(0.45,'rgba(255,242,220,0.08)');
-  mid.addColorStop(1,   'rgba(255,255,255,0)');
-  ctx.fillStyle = mid;
+  // ── 虹彩稜光：水晶折射般的夢幻虹彩 ──
+  if (st.prism > 0) {
+    // 1) 偏心放射虹彩（像肥皂泡 / 水晶折射，screen 保持透亮）
+    ctx.globalCompositeOperation = 'screen';
+    const aR = Math.min(0.62, st.prism * 3);
+    const px = S*0.64, py = S*0.40;
+    const rad = ctx.createRadialGradient(px, py, S*0.06, px, py, S*0.72);
+    rad.addColorStop(0.00, 'rgba(255,255,255,0)');
+    rad.addColorStop(0.28, `rgba(255,176,206,${aR.toFixed(3)})`);
+    rad.addColorStop(0.45, `rgba(255,206,160,${(aR*0.9).toFixed(3)})`);
+    rad.addColorStop(0.60, `rgba(250,240,180,${(aR*0.8).toFixed(3)})`);
+    rad.addColorStop(0.76, `rgba(176,232,200,${(aR*0.9).toFixed(3)})`);
+    rad.addColorStop(0.90, `rgba(196,200,244,${aR.toFixed(3)})`);
+    rad.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = rad;
+    ctx.fillRect(0,0,S,S);
+
+    // 2) 對角虹彩光帶（normal 混合讓色相清楚浮現）
+    ctx.globalCompositeOperation = 'source-over';
+    const aD = Math.min(0.32, st.prism * 1.7);
+    const lg = ctx.createLinearGradient(S*0.08, S*0.95, S*0.92, S*0.12);
+    lg.addColorStop(0.00, 'rgba(255,255,255,0)');
+    PRISM_STOPS.forEach((c,i) =>
+      lg.addColorStop(0.22 + (i/(PRISM_STOPS.length-1))*0.56, `rgba(${c.join(',')},${aD.toFixed(3)})`));
+    lg.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = lg;
+    ctx.fillRect(0,0,S,S);
+  }
+
+  // 內透光核（偏心）——「光，從細胞深處透出」，放輕避免死白
+  ctx.globalCompositeOperation = 'lighter';
+  const coreX = cx*0.88, coreY = cy*0.78;
+  const core = ctx.createRadialGradient(coreX, coreY, 0, coreX, coreY, S*0.46);
+  core.addColorStop(0,    `rgba(${st.core.join(',')},0.40)`);
+  core.addColorStop(0.30, `rgba(${st.core.join(',')},0.16)`);
+  core.addColorStop(1,    `rgba(${st.core.join(',')},0)`);
+  ctx.fillStyle = core;
+  ctx.fillRect(0,0,S,S);
+
+  ctx.globalCompositeOperation = 'source-over';
+
+  // 頂部高光——讓整體像一顆透光的球體
+  const spec = ctx.createRadialGradient(cx*0.70, cy*0.40, 0, cx*0.70, cy*0.40, S*0.34);
+  spec.addColorStop(0,  'rgba(255,255,255,0.28)');
+  spec.addColorStop(0.5,'rgba(255,255,255,0.05)');
+  spec.addColorStop(1,  'rgba(255,255,255,0)');
+  ctx.fillStyle = spec;
+  ctx.fillRect(0,0,S,S);
+
+  // 邊緣暗角——把光收進來，凸顯由內而外的透光
+  const vig = ctx.createRadialGradient(cx, cy, S*0.30, cx, cy, S*0.5);
+  vig.addColorStop(0,   `rgba(${st.vig[0]},${st.vig[1]},${st.vig[2]},0)`);
+  vig.addColorStop(0.72,`rgba(${st.vig[0]},${st.vig[1]},${st.vig[2]},${(st.vig[3]*0.25).toFixed(3)})`);
+  vig.addColorStop(1,   `rgba(${st.vig[0]},${st.vig[1]},${st.vig[2]},${st.vig[3]})`);
+  ctx.fillStyle = vig;
   ctx.fillRect(0,0,S,S);
 
   // 文字
   if (text) {
-    const fontSize = text==='SL' ? S*0.28 : S*0.10;
-    ctx.font = `300 ${fontSize}px Georgia, serif`;
-    ctx.textAlign = 'center';
+    const fontSize = text==='SL' ? S*0.26 : S*0.095;
+    const spacing  = text==='SL' ? S*0.02 : S*0.012;
+    ctx.font = `300 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
+    ctx.fillStyle = '#9a6a3c';
     ctx.textBaseline = 'middle';
-    ctx.shadowColor = 'rgba(180,130,60,0.20)';
-    ctx.shadowBlur = text==='SL' ? 20 : 14;
-    ctx.fillStyle = '#a87840';
-    ctx.fillText(text, cx, cy);
+    ctx.shadowColor = 'rgba(255,244,224,0.9)';
+    ctx.shadowBlur = text==='SL' ? 26 : 18;
+    drawSpacedLine(ctx, text, cx, cy, spacing);
     ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(180,140,70,0.15)';
-    ctx.fillText(text, cx-0.4, cy-0.6);
   }
 
   ctx.restore();
