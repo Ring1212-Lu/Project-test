@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>She Light · 品牌工具箱</title>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Playfair+Display:ital,wght@0,500;0,600;1,500;1,600&family=Noto+Serif+TC:wght@300;400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Noto+Serif+TC:wght@300;400&display=swap" rel="stylesheet">
 <style>
 /* ══════════════════════════════
    ROOT VARIABLES
@@ -55,7 +55,7 @@ body {
   margin-bottom: 16px;
 }
 .brand-name {
-  font-family: 'Cormorant Garamond', serif;
+  font-family: 'Playfair Display', serif;
   font-size: 13px;
   letter-spacing: 8px;
   color: var(--champagne);
@@ -181,7 +181,7 @@ body {
   background: linear-gradient(135deg,#e8c09022,#f0b0c015);
   border: 0.5px solid var(--champagne);
   border-radius: 3px;
-  font-family: 'Cormorant Garamond', serif;
+  font-family: 'Playfair Display', serif;
   font-size: 15px;
   font-style: italic;
   letter-spacing: 3px;
@@ -222,7 +222,7 @@ body {
 }
 @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
 .spin-msg {
-  font-family: 'Cormorant Garamond', serif;
+  font-family: 'Playfair Display', serif;
   font-style: italic;
   font-size: 12px; letter-spacing: 2px; color: var(--light);
   animation: flicker 2s ease-in-out infinite;
@@ -268,7 +268,7 @@ body {
 
 .post-block { background:var(--card-bg);border-radius:3px;padding:18px;margin-bottom:12px;animation:fadeUp 0.35s ease forwards;opacity:0 }
 .psec-lbl  { font-size:9px;letter-spacing:2px;color:var(--light);margin-bottom:5px }
-.p-head    { font-family:'Cormorant Garamond',serif;font-style:italic;font-size:21px;color:var(--brown);line-height:1.5;margin-bottom:12px;padding-bottom:12px;border-bottom:0.5px solid #e8d8c840 }
+.p-head    { font-family:'Playfair Display',serif;font-style:italic;font-size:21px;color:var(--brown);line-height:1.5;margin-bottom:12px;padding-bottom:12px;border-bottom:0.5px solid #e8d8c840 }
 .p-body    { font-size:13px;color:var(--brown);line-height:1.9;white-space:pre-wrap;margin-bottom:12px;padding-bottom:12px;border-bottom:0.5px solid #e8d8c840 }
 .p-cta     { font-size:12px;color:var(--coral);line-height:1.7 }
 
@@ -300,7 +300,7 @@ body {
   pointer-events: none;
 }
 .card-brand {
-  font-family: 'Cormorant Garamond', serif;
+  font-family: 'Playfair Display', serif;
   font-size: 9px; letter-spacing: 8px; color: var(--champagne);
   text-transform: uppercase;
   position: absolute; top: 20px; left: 50%;
@@ -311,7 +311,7 @@ body {
   position: relative; z-index: 2; text-align: center; width: 100%;
 }
 .card-main-text {
-  font-family: 'Cormorant Garamond', serif;
+  font-family: 'Playfair Display', serif;
   font-weight: 300; font-style: italic;
   font-size: clamp(16px, 4.5vw, 22px);
   color: var(--brown); line-height: 1.65;
@@ -385,7 +385,7 @@ canvas { display: block; }
 .trend-card:nth-child(2){animation-delay:0.12s;border-left-color:var(--coral)}
 .trend-card:nth-child(3){animation-delay:0.19s;border-left-color:var(--pink)}
 .trend-src   { font-size:8px;letter-spacing:1.5px;color:var(--light);margin-bottom:5px }
-.trend-topic { font-family:'Cormorant Garamond',serif;font-style:italic;font-size:14px;color:var(--brown);line-height:1.5;margin-bottom:5px }
+.trend-topic { font-family:'Playfair Display',serif;font-style:italic;font-size:14px;color:var(--brown);line-height:1.5;margin-bottom:5px }
 .trend-ins   { font-size:11px;color:var(--mid);line-height:1.7;margin-bottom:6px }
 .trend-hook  { padding:7px 10px;background:#f5ede4;border-radius:2px }
 .trend-hlbl  { font-size:8px;letter-spacing:1.5px;color:var(--light);display:block;margin-bottom:2px }
@@ -885,9 +885,9 @@ async function downloadCard() {
   // 等品牌字型載入完成，避免輸出落到系統字型
   try {
     await Promise.all([
-      document.fonts.load('300 italic 80px "Cormorant Garamond"'),
+      document.fonts.load('500 italic 80px "Playfair Display"'),
       document.fonts.load('300 80px "Noto Serif TC"'),
-      document.fonts.load('300 30px "Cormorant Garamond"'),
+      document.fonts.load('600 30px "Playfair Display"'),
     ]);
     await document.fonts.ready;
   } catch (e) {}
@@ -915,7 +915,7 @@ async function downloadCard() {
   ctx.globalAlpha = 1;
 
   // 品牌名（頂部）
-  ctx.font = '300 30px "Cormorant Garamond", serif';
+  ctx.font = '600 30px "Playfair Display", serif';
   ctx.fillStyle = '#c49870';
   ctx.textBaseline = 'middle';
   drawSpacedLine(ctx, 'SHE LIGHT', S/2, 82, 14);
@@ -925,7 +925,7 @@ async function downloadCard() {
   const maxTextH = 560;
   let fontSize = 80, lines = [], lineH = 0;
   while (fontSize >= 34) {
-    ctx.font = `300 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
+    ctx.font = `500 italic ${fontSize}px "Playfair Display", "Noto Serif TC", serif`;
     lines = wrapText(ctx, main, maxWidth);
     lineH = fontSize * 1.5;
     if (lines.length * lineH <= maxTextH) break;
