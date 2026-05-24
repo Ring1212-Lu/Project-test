@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>She Light · 品牌工具箱</title>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Noto+Serif+TC:wght@300;400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Playfair+Display:ital,wght@0,500;0,600;1,500;1,600&family=Noto+Serif+TC:wght@300;400&display=swap" rel="stylesheet">
 <style>
 /* ══════════════════════════════
    ROOT VARIABLES
@@ -1397,18 +1397,18 @@ function drawAvatarCanvas(canvas, style, text) {
     if (!text.includes(' ')) {
       // 字標（如 SL）：放大置中
       const fontSize = S*0.30, spacing = S*0.02;
-      ctx.font = `300 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
+      ctx.font = `600 italic ${fontSize}px "Playfair Display", "Noto Serif TC", serif`;
       drawGoldText(ctx, text, cx, cy, fontSize, spacing);
     } else {
       // 完整字（如 She Light）：單行、適度放大（不撐滿，留更多呼吸感）
       const maxW = S*0.66, k = 0.035, ref = 100;
-      ctx.font = `400 italic ${ref}px "Cormorant Garamond", "Noto Serif TC", serif`;
+      ctx.font = `500 italic ${ref}px "Playfair Display", "Noto Serif TC", serif`;
       const chars = [...text];
       let sum = 0; chars.forEach(ch => sum += ctx.measureText(ch).width);
       const wRef = sum + (chars.length-1)*ref*k;
       const fontSize = Math.min(ref * maxW / wRef, S*0.21);
       const spacing = fontSize*k;
-      ctx.font = `400 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
+      ctx.font = `500 italic ${fontSize}px "Playfair Display", "Noto Serif TC", serif`;
       drawGoldText(ctx, text, cx, cy, fontSize, spacing);
     }
   }
