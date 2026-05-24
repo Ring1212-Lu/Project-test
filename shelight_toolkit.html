@@ -773,17 +773,23 @@ function drawSpacedLine(ctx, text, cx, y, spacing) {
   ctx.textAlign = prevAlign;
 }
 
-// 燙金字效果：金屬漸層 + 微浮雕 + 暖光暈，營造精緻貴氣
+// 燙金字效果：金屬漸層 + 微浮雕 + 暖光暈 + 細碎鑽閃亮
 function drawGoldText(ctx, text, cx, y, fontSize, spacing) {
-  ctx.save();
-  ctx.shadowBlur = 0;
+  const cnv = ctx.canvas;
+  const off = document.createElement('canvas');
+  off.width = cnv.width; off.height = cnv.height;
+  const o = off.getContext('2d');
+  o.font = ctx.font;
+  o.textBaseline = 'middle';
+
   // 浮雕：下緣壓深、上緣提亮，做出燙金的立體厚度
-  ctx.fillStyle = 'rgba(86,56,20,0.55)';
-  drawSpacedLine(ctx, text, cx + fontSize*0.012, y + fontSize*0.024, spacing);
-  ctx.fillStyle = 'rgba(255,247,218,0.6)';
-  drawSpacedLine(ctx, text, cx - fontSize*0.008, y - fontSize*0.020, spacing);
+  o.fillStyle = 'rgba(86,56,20,0.55)';
+  drawSpacedLine(o, text, cx + fontSize*0.012, y + fontSize*0.024, spacing);
+  o.fillStyle = 'rgba(255,247,218,0.6)';
+  drawSpacedLine(o, text, cx - fontSize*0.008, y - fontSize*0.020, spacing);
+
   // 金屬漸層主體（由上而下：香檳亮 → 飽金 → 深金，中段一道反光）
-  const g = ctx.createLinearGradient(0, y - fontSize*0.56, 0, y + fontSize*0.56);
+  const g = o.createLinearGradient(0, y - fontSize*0.56, 0, y + fontSize*0.56);
   g.addColorStop(0.00, '#fbeec2');
   g.addColorStop(0.22, '#edce86');
   g.addColorStop(0.46, '#c89542');
@@ -791,11 +797,48 @@ function drawGoldText(ctx, text, cx, y, fontSize, spacing) {
   g.addColorStop(0.58, '#e6bb64');
   g.addColorStop(0.80, '#a8722a');
   g.addColorStop(1.00, '#80571e');
-  ctx.fillStyle = g;
-  ctx.shadowColor = 'rgba(208,158,80,0.45)';
-  ctx.shadowBlur = fontSize*0.16;
-  drawSpacedLine(ctx, text, cx, y, spacing);
-  ctx.shadowBlur = 0;
+  o.fillStyle = g;
+  o.shadowColor = 'rgba(208,158,80,0.45)';
+  o.shadowBlur = fontSize*0.16;
+  drawSpacedLine(o, text, cx, y, spacing);
+  o.shadowBlur = 0;
+
+  // ── 細碎鑽：大量微小亮點只落在字體上（source-atop），帶金屬閃亮感 ──
+  o.globalCompositeOperation = 'source-atop';
+  const chars = [...text];
+  const widths = chars.map(c => o.measureText(c).width);
+  const totalW = widths.reduce((a,w) => a + w + spacing, 0) - spacing;
+  const x0 = cx - totalW/2, boxTop = y - fontSize*0.46, boxH = fontSize*0.88;
+  let seed = 20260524;
+  const rnd = () => { seed = (seed*1664525 + 1013904223) & 0x7fffffff; return seed/0x7fffffff; };
+  const count = Math.round(totalW/fontSize * 18) + 20;
+  for (let i = 0; i < count; i++) {
+    const gx = x0 + rnd()*totalW;
+    const gy = boxTop + rnd()*boxH;
+    const sz = fontSize*(0.008 + rnd()*0.028);
+    const br = 0.55 + rnd()*0.45;
+    const sg = o.createRadialGradient(gx,gy,0,gx,gy,sz);
+    sg.addColorStop(0.00, `rgba(255,255,250,${br.toFixed(2)})`);
+    sg.addColorStop(0.50, `rgba(255,243,212,${(br*0.4).toFixed(2)})`);
+    sg.addColorStop(1.00, 'rgba(255,240,200,0)');
+    o.fillStyle = sg;
+    o.beginPath(); o.arc(gx,gy,sz,0,Math.PI*2); o.fill();
+    // 少數加上十字星芒，像鑽石的反光
+    if (rnd() > 0.80) {
+      const fl = sz*3.4;
+      o.strokeStyle = `rgba(255,255,252,${(br*0.8).toFixed(2)})`;
+      o.lineWidth = Math.max(0.6, sz*0.16);
+      o.beginPath();
+      o.moveTo(gx-fl,gy); o.lineTo(gx+fl,gy);
+      o.moveTo(gx,gy-fl); o.lineTo(gx,gy+fl);
+      o.stroke();
+    }
+  }
+  o.globalCompositeOperation = 'source-over';
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(off, 0, 0);
   ctx.restore();
 }
 
