@@ -773,6 +773,32 @@ function drawSpacedLine(ctx, text, cx, y, spacing) {
   ctx.textAlign = prevAlign;
 }
 
+// 燙金字效果：金屬漸層 + 微浮雕 + 暖光暈，營造精緻貴氣
+function drawGoldText(ctx, text, cx, y, fontSize, spacing) {
+  ctx.save();
+  ctx.shadowBlur = 0;
+  // 浮雕：下緣壓深、上緣提亮，做出燙金的立體厚度
+  ctx.fillStyle = 'rgba(86,56,20,0.55)';
+  drawSpacedLine(ctx, text, cx + fontSize*0.012, y + fontSize*0.024, spacing);
+  ctx.fillStyle = 'rgba(255,247,218,0.6)';
+  drawSpacedLine(ctx, text, cx - fontSize*0.008, y - fontSize*0.020, spacing);
+  // 金屬漸層主體（由上而下：香檳亮 → 飽金 → 深金，中段一道反光）
+  const g = ctx.createLinearGradient(0, y - fontSize*0.56, 0, y + fontSize*0.56);
+  g.addColorStop(0.00, '#fbeec2');
+  g.addColorStop(0.22, '#edce86');
+  g.addColorStop(0.46, '#c89542');
+  g.addColorStop(0.52, '#b9842f');
+  g.addColorStop(0.58, '#e6bb64');
+  g.addColorStop(0.80, '#a8722a');
+  g.addColorStop(1.00, '#80571e');
+  ctx.fillStyle = g;
+  ctx.shadowColor = 'rgba(208,158,80,0.45)';
+  ctx.shadowBlur = fontSize*0.16;
+  drawSpacedLine(ctx, text, cx, y, spacing);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
 // 依寬度自動換行：中文逐字斷行，保留手動換行
 function wrapText(ctx, text, maxWidth) {
   const out = [];
@@ -1308,17 +1334,13 @@ function drawAvatarCanvas(canvas, style, text) {
   ctx.fillStyle = cl;
   ctx.beginPath(); ctx.arc(lx*0.92, ly*0.84, S*0.072, 0, Math.PI*2); ctx.fill();
 
-  // 文字
+  // 文字（燙金）
   if (text) {
     const fontSize = text==='SL' ? S*0.26 : S*0.095;
     const spacing  = text==='SL' ? S*0.02 : S*0.012;
     ctx.font = `300 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
-    ctx.fillStyle = '#9a6a3c';
     ctx.textBaseline = 'middle';
-    ctx.shadowColor = 'rgba(255,244,224,0.9)';
-    ctx.shadowBlur = text==='SL' ? 26 : 18;
-    drawSpacedLine(ctx, text, cx, cy, spacing);
-    ctx.shadowBlur = 0;
+    drawGoldText(ctx, text, cx, cy, fontSize, spacing);
   }
 
   ctx.restore();
