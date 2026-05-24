@@ -782,6 +782,15 @@ function drawGoldText(ctx, text, cx, y, fontSize, spacing) {
   o.font = ctx.font;
   o.textBaseline = 'middle';
 
+  // 對比襯底：字後一層柔和深色，讓金字從明亮球面浮出，縮成大頭貼也清楚
+  o.save();
+  o.fillStyle = 'rgba(72,46,18,0.5)';
+  o.shadowColor = 'rgba(58,36,12,0.55)';
+  o.shadowBlur = fontSize*0.13;
+  drawSpacedLine(o, text, cx, y, spacing);
+  o.shadowBlur = 0;
+  o.restore();
+
   // 浮雕：下緣壓深、上緣提亮，做出燙金的立體厚度
   o.fillStyle = 'rgba(86,56,20,0.55)';
   drawSpacedLine(o, text, cx + fontSize*0.012, y + fontSize*0.024, spacing);
@@ -798,7 +807,12 @@ function drawGoldText(ctx, text, cx, y, fontSize, spacing) {
   g.addColorStop(0.80, '#a8722a');
   g.addColorStop(1.00, '#80571e');
   o.fillStyle = g;
-  o.shadowColor = 'rgba(208,158,80,0.45)';
+  // 加粗：四向微位移疊繪，讓細斜體筆畫縮圖後仍扎實
+  const fat = fontSize*0.016;
+  o.shadowBlur = 0;
+  [[-fat,0],[fat,0],[0,-fat],[0,fat],[-fat*0.7,-fat*0.7],[fat*0.7,fat*0.7]]
+    .forEach(([dx,dy]) => drawSpacedLine(o, text, cx+dx, y+dy, spacing));
+  o.shadowColor = 'rgba(208,158,80,0.4)';
   o.shadowBlur = fontSize*0.16;
   drawSpacedLine(o, text, cx, y, spacing);
   o.shadowBlur = 0;
@@ -1386,11 +1400,11 @@ function drawAvatarCanvas(canvas, style, text) {
       ctx.font = `300 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
       drawGoldText(ctx, text, cx, cy, fontSize, spacing);
     } else {
-      // 完整字（如 She Light）：拆兩行放大，縮到大頭貼尺寸仍清楚
+      // 完整字（如 She Light）：拆兩行放大、加粗，縮到大頭貼尺寸仍清楚
       const words = text.split(' ');
-      const fontSize = S*0.165, spacing = S*0.006;
-      ctx.font = `300 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
-      const lh = fontSize*1.02;
+      const fontSize = S*0.175, spacing = S*0.004;
+      ctx.font = `400 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
+      const lh = fontSize*1.04;
       const startY = cy - (words.length-1)*lh/2;
       words.forEach((w,i) => drawGoldText(ctx, w, cx, startY + i*lh, fontSize, spacing));
     }
