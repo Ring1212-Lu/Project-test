@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>She Light · 品牌工具箱</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Noto+Serif+TC:wght@300;400&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════
+   ROOT VARIABLES
+══════════════════════════════ */
+:root {
+  --cream:     #fdf8f2;
+  --champagne: #e8c090;
+  --coral:     #e8a080;
+  --pink:      #f0b0c0;
+  --green:     #a8c8a8;
+  --brown:     #6b4838;
+  --mid:       #a08878;
+  --light:     #c0a890;
+  --bg:        #ede8e0;
+  --card-bg:   #fdf8f2;
+  --border:    #e0d0c0;
+  --btn-h:     52px;
+}
+
+/* ══════════════════════════════
+   RESET & BASE
+══════════════════════════════ */
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html { font-size: 16px; }
+body {
+  background: var(--bg);
+  font-family: 'Noto Serif TC', serif;
+  color: var(--brown);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ══════════════════════════════
+   HEADER
+══════════════════════════════ */
+.header {
+  background: var(--cream);
+  padding: 20px 20px 0;
+  border-bottom: 0.5px solid #e0d0c030;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.brand-name {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 13px;
+  letter-spacing: 8px;
+  color: var(--champagne);
+  text-transform: uppercase;
+}
+.brand-tag {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--light);
+}
+
+/* tab nav */
+.tab-nav {
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.tab-nav::-webkit-scrollbar { display: none; }
+.tab-btn {
+  flex-shrink: 0;
+  padding: 12px 18px;
+  font-family: 'Noto Serif TC', serif;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--light);
+  background: transparent;
+  border: none;
+  border-bottom: 1.5px solid transparent;
+  cursor: pointer;
+  transition: all 0.25s;
+  white-space: nowrap;
+}
+.tab-btn.active {
+  color: var(--brown);
+  border-bottom-color: var(--champagne);
+}
+
+/* ══════════════════════════════
+   MAIN CONTENT
+══════════════════════════════ */
+.main { padding: 20px; max-width: 560px; margin: 0 auto; }
+.panel { display: none; }
+.panel.show { display: block; }
+
+/* ══════════════════════════════
+   SHARED COMPONENTS
+══════════════════════════════ */
+.section {
+  background: var(--card-bg);
+  border-radius: 4px;
+  padding: 18px;
+  margin-bottom: 12px;
+  animation: fadeUp 0.4s ease forwards;
+  opacity: 0;
+}
+.section:nth-child(1){animation-delay:0.05s}
+.section:nth-child(2){animation-delay:0.10s}
+.section:nth-child(3){animation-delay:0.15s}
+.section:nth-child(4){animation-delay:0.20s}
+.section:nth-child(5){animation-delay:0.25s}
+
+.sec-label {
+  font-size: 9px;
+  letter-spacing: 4px;
+  color: var(--light);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sec-label-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.sec-divider {
+  height: 0.5px;
+  background: linear-gradient(to right, var(--border), transparent);
+  margin: 12px 0;
+}
+
+.input-field {
+  width: 100%;
+  background: #faf5ee;
+  border: 0.5px solid var(--border);
+  border-radius: 3px;
+  padding: 12px 14px;
+  font-family: 'Noto Serif TC', serif;
+  font-size: 13px;
+  color: var(--brown);
+  outline: none;
+  resize: none;
+  transition: border-color 0.3s;
+  -webkit-appearance: none;
+}
+.input-field:focus { border-color: var(--champagne); }
+.input-field::placeholder { color: var(--light); font-style: italic; }
+
+.pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.pill {
+  padding: 8px 14px;
+  border: 0.5px solid var(--border);
+  border-radius: 20px;
+  background: #faf5ee;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--mid);
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+.pill.on {
+  background: linear-gradient(135deg,#ffd8a828,#f0b0c018);
+  border-color: var(--champagne);
+  color: var(--brown);
+}
+
+.btn-main {
+  width: 100%;
+  height: var(--btn-h);
+  background: linear-gradient(135deg,#e8c09022,#f0b0c015);
+  border: 0.5px solid var(--champagne);
+  border-radius: 3px;
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 15px;
+  font-style: italic;
+  letter-spacing: 3px;
+  color: var(--brown);
+  cursor: pointer;
+  transition: all 0.25s;
+  margin-bottom: 10px;
+}
+.btn-main:active { background: linear-gradient(135deg,#e8c09040,#f0b0c030); }
+.btn-main:disabled { opacity: 0.4; }
+
+.btn-sec {
+  width: 100%;
+  height: 44px;
+  background: transparent;
+  border: 0.5px solid var(--border);
+  border-radius: 3px;
+  font-family: 'Noto Serif TC', serif;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--mid);
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 8px;
+}
+.btn-sec.copied { border-color: var(--green); color: var(--green); }
+
+/* loading */
+.spin-wrap { display:none; text-align:center; padding:32px 0; }
+.spin-wrap.show { display:block; }
+.orb {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: radial-gradient(ellipse at 40% 38%,
+    #ffffff 0%,#ffd8a870 25%,#f0b0c040 50%,transparent 70%);
+  box-shadow: 0 0 18px #ffd8a840, 0 0 40px #f0b0c025;
+  margin: 0 auto 12px;
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+.spin-msg {
+  font-family: 'Cormorant Garamond', serif;
+  font-style: italic;
+  font-size: 12px; letter-spacing: 2px; color: var(--light);
+  animation: flicker 2s ease-in-out infinite;
+}
+@keyframes flicker{0%,100%{opacity:0.5}50%{opacity:1}}
+
+/* output */
+.out-label {
+  font-size: 9px; letter-spacing: 4px; color: var(--light);
+  margin-bottom: 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.out-label::after {
+  content:''; flex:1; height:0.5px;
+  background: linear-gradient(to right,#d0c0b040,transparent);
+}
+
+.slide-card {
+  background: var(--card-bg);
+  border-radius: 3px;
+  padding: 14px 14px 14px 16px;
+  margin-bottom: 8px;
+  border-left: 2px solid var(--champagne);
+  animation: fadeUp 0.35s ease forwards; opacity:0;
+}
+.slide-card:nth-child(1){animation-delay:0.04s;border-left-color:var(--champagne)}
+.slide-card:nth-child(2){animation-delay:0.08s;border-left-color:var(--coral)}
+.slide-card:nth-child(3){animation-delay:0.12s;border-left-color:var(--pink)}
+.slide-card:nth-child(4){animation-delay:0.16s;border-left-color:var(--green)}
+.slide-card:nth-child(5){animation-delay:0.20s;border-left-color:var(--champagne)}
+.slide-card:nth-child(6){animation-delay:0.24s;border-left-color:var(--coral)}
+.slide-card:nth-child(7){animation-delay:0.28s;border-left-color:var(--pink)}
+.slide-num  { font-size:9px;letter-spacing:3px;color:var(--champagne);margin-bottom:3px }
+.slide-role { font-size:9px;letter-spacing:1.5px;color:var(--light);margin-bottom:6px;padding-bottom:6px;border-bottom:0.5px solid #e8d8c830 }
+.slide-text { font-size:13px;color:var(--brown);line-height:1.8;white-space:pre-wrap }
+
+.cap-card {
+  background: var(--card-bg); border-radius:3px; padding:16px;
+  margin-bottom:12px; animation:fadeUp 0.35s ease forwards 0.32s; opacity:0;
+}
+.cap-label { font-size:9px;letter-spacing:2px;color:var(--light);margin-bottom:7px }
+.cap-text  { font-size:13px;color:var(--brown);line-height:1.9;white-space:pre-wrap }
+
+.post-block { background:var(--card-bg);border-radius:3px;padding:18px;margin-bottom:12px;animation:fadeUp 0.35s ease forwards;opacity:0 }
+.psec-lbl  { font-size:9px;letter-spacing:2px;color:var(--light);margin-bottom:5px }
+.p-head    { font-family:'Cormorant Garamond',serif;font-style:italic;font-size:21px;color:var(--brown);line-height:1.5;margin-bottom:12px;padding-bottom:12px;border-bottom:0.5px solid #e8d8c840 }
+.p-body    { font-size:13px;color:var(--brown);line-height:1.9;white-space:pre-wrap;margin-bottom:12px;padding-bottom:12px;border-bottom:0.5px solid #e8d8c840 }
+.p-cta     { font-size:12px;color:var(--coral);line-height:1.7 }
+
+.err-box { background:#fff8f5;border:0.5px solid #f0c0b0;border-radius:3px;padding:12px;font-size:12px;color:var(--coral);line-height:1.7;margin-bottom:12px }
+
+/* ══════════════════════════════
+   CARD MAKER
+══════════════════════════════ */
+.card-preview-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.brand-card {
+  width: min(320px, 100%);
+  aspect-ratio: 1;
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 32px;
+  cursor: pointer;
+}
+.card-bg-layer {
+  position: absolute; inset: 0;
+  pointer-events: none;
+}
+.card-brand {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 9px; letter-spacing: 8px; color: var(--champagne);
+  text-transform: uppercase;
+  position: absolute; top: 20px; left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap; z-index: 2;
+}
+.card-content-area {
+  position: relative; z-index: 2; text-align: center; width: 100%;
+}
+.card-main-text {
+  font-family: 'Cormorant Garamond', serif;
+  font-weight: 300; font-style: italic;
+  font-size: clamp(16px, 4.5vw, 22px);
+  color: var(--brown); line-height: 1.65;
+  margin-bottom: 14px; white-space: pre-wrap;
+}
+.card-divider {
+  width: 28px; height: 0.5px;
+  background: linear-gradient(to right, transparent, var(--coral), transparent);
+  margin: 0 auto 14px;
+}
+.card-sub-text {
+  font-size: 10px; letter-spacing: 3px; color: var(--champagne);
+}
+.card-dot {
+  position: absolute; width: 3px; height: 3px; border-radius: 50%;
+}
+.card-dot.tl { top:14px;left:14px;background:var(--champagne);opacity:0.4 }
+.card-dot.tr { top:14px;right:14px;background:var(--pink);opacity:0.4 }
+.card-dot.bl { bottom:14px;left:14px;background:var(--green);opacity:0.35 }
+.card-dot.br { bottom:14px;right:14px;background:var(--champagne);opacity:0.35 }
+
+.screenshot-hint {
+  text-align: center;
+  font-size: 10px; letter-spacing: 2px; color: var(--light);
+  margin-bottom: 14px;
+}
+
+/* ══════════════════════════════
+   AVATAR MAKER
+══════════════════════════════ */
+.avatar-previews {
+  display: flex; gap: 20px; justify-content: center; margin-bottom: 16px;
+}
+.avatar-item { display:flex;flex-direction:column;align-items:center;gap:8px; }
+.avatar-lbl  { font-size:9px;letter-spacing:2px;color:var(--light); }
+.avatar-circle {
+  width: 120px; height: 120px; border-radius: 50%;
+  overflow: hidden; flex-shrink: 0;
+  box-shadow: 0 4px 20px rgba(160,120,80,0.15);
+}
+.avatar-dark {
+  background: #181410; border-radius: 50%; padding: 8px;
+}
+canvas { display: block; }
+
+/* ══════════════════════════════
+   TREND PANEL
+══════════════════════════════ */
+.prog-list { margin-bottom:14px }
+.prog-item { display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:0.5px solid #e8d8c820 }
+.prog-item:last-child { border-bottom:none }
+.prog-icon {
+  width:20px;height:20px;border-radius:50%;
+  border:0.5px solid #e0d0c0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:9px;flex-shrink:0;transition:all 0.3s;
+}
+.prog-icon.running{border-color:var(--champagne);color:var(--champagne);animation:spin 1.2s linear infinite}
+.prog-icon.done   {border-color:var(--green);color:var(--green)}
+.prog-icon.fail   {border-color:var(--coral);color:var(--coral)}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.prog-text { flex:1;font-size:11px;color:var(--mid) }
+.prog-text.running { color:var(--brown) }
+
+.trend-card {
+  background:#faf5ee;border-radius:3px;padding:13px;
+  margin-bottom:9px;border-left:2px solid var(--champagne);
+  animation:fadeUp 0.35s ease forwards;opacity:0;
+}
+.trend-card:nth-child(1){animation-delay:0.05s;border-left-color:var(--champagne)}
+.trend-card:nth-child(2){animation-delay:0.12s;border-left-color:var(--coral)}
+.trend-card:nth-child(3){animation-delay:0.19s;border-left-color:var(--pink)}
+.trend-src   { font-size:8px;letter-spacing:1.5px;color:var(--light);margin-bottom:5px }
+.trend-topic { font-family:'Cormorant Garamond',serif;font-style:italic;font-size:14px;color:var(--brown);line-height:1.5;margin-bottom:5px }
+.trend-ins   { font-size:11px;color:var(--mid);line-height:1.7;margin-bottom:6px }
+.trend-hook  { padding:7px 10px;background:#f5ede4;border-radius:2px }
+.trend-hlbl  { font-size:8px;letter-spacing:1.5px;color:var(--light);display:block;margin-bottom:2px }
+.trend-htxt  { font-size:11px;color:var(--coral);line-height:1.6 }
+
+.direction-box {
+  background:linear-gradient(135deg,#ffd8a815,#f0b0c010);
+  border:0.5px solid #e8d0b840;border-radius:3px;padding:15px;margin-bottom:14px;
+}
+.dir-lbl  { font-size:9px;letter-spacing:3px;color:var(--champagne);margin-bottom:7px }
+.dir-text { font-size:13px;color:var(--brown);line-height:1.8 }
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+
+<!-- ══ HEADER ══ -->
+<div class="header">
+  <div class="header-top">
+    <div class="brand-name">She Light</div>
+    <div class="brand-tag" id="today-date"></div>
+  </div>
+  <div class="tab-nav">
+    <button class="tab-btn active" onclick="switchTab('card')">卡片製作</button>
+    <button class="tab-btn" onclick="switchTab('trend')">每日趨勢</button>
+    <button class="tab-btn" onclick="switchTab('post')">貼文生成</button>
+    <button class="tab-btn" onclick="switchTab('avatar')">頭像</button>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- ══════════════════════════════
+       TAB 1: 卡片製作
+  ══════════════════════════════ -->
+  <div class="panel show" id="panel-card">
+
+    <div class="section">
+      <div class="sec-label"><div class="sec-label-dot" style="background:var(--champagne)"></div>主要文字</div>
+      <textarea class="input-field" id="card-main" rows="3"
+        placeholder="例如：每一個認真向內觀察的人，正在發光。"></textarea>
+    </div>
+
+    <div class="section">
+      <div class="sec-label"><div class="sec-label-dot" style="background:var(--coral)"></div>副標（選填）</div>
+      <input class="input-field" id="card-sub" type="text"
+        placeholder="例如：矽鈹石 · Phenacite" style="resize:none">
+    </div>
+
+    <div class="section">
+      <div class="sec-label"><div class="sec-label-dot" style="background:var(--pink)"></div>背景風格</div>
+      <div class="pills">
+        <div class="pill on" onclick="selStyle(this,'warm')" id="style-warm">暖光（香檳金）</div>
+        <div class="pill" onclick="selStyle(this,'pink')"  id="style-pink">粉光（玫瑰粉）</div>
+        <div class="pill" onclick="selStyle(this,'green')" id="style-green">綠光（霧綠）</div>
+        <div class="pill" onclick="selStyle(this,'cool')"  id="style-cool">冷光（月白）</div>
+      </div>
+    </div>
+
+    <button class="btn-main" onclick="renderCard()">生成卡片預覽</button>
+
+    <div id="card-preview-section" style="display:none">
+      <div class="out-label">卡片預覽</div>
+      <div class="card-preview-wrap">
+        <div class="brand-card" id="brand-card">
+          <canvas class="card-bg-layer" id="card-canvas"></canvas>
+          <div class="card-dot tl"></div>
+          <div class="card-dot tr"></div>
+          <div class="card-dot bl"></div>
+          <div class="card-dot br"></div>
+          <div class="card-brand">She Light</div>
+          <div class="card-content-area">
+            <div class="card-main-text" id="card-display-main"></div>
+            <div class="card-divider" id="card-divider" style="display:none"></div>
+            <div class="card-sub-text" id="card-display-sub"></div>
+          </div>
+        </div>
+      </div>
+      <div class="screenshot-hint">長按截圖儲存 · 或點擊下方下載</div>
+      <button class="btn-sec" onclick="downloadCard()">下載卡片</button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════
+       TAB 2: 每日趨勢
+  ══════════════════════════════ -->
+  <div class="panel" id="panel-trend">
+
+    <div class="section">
+      <div class="sec-label"><div class="sec-label-dot" style="background:var(--champagne)"></div>今日資料來源</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
+        <span style="padding:4px 10px;border:0.5px solid var(--champagne);border-radius:20px;font-size:8px;letter-spacing:1.5px;color:#a07840">Dcard 身心靈</span>
+        <span style="padding:4px 10px;border:0.5px solid var(--coral);border-radius:20px;font-size:8px;letter-spacing:1.5px;color:#a06050">PTT WomenTalk</span>
+        <span style="padding:4px 10px;border:0.5px solid var(--pink);border-radius:20px;font-size:8px;letter-spacing:1.5px;color:#a07090">AI 補充搜尋</span>
+      </div>
+
+      <div class="prog-list" id="trend-prog">
+        <div class="prog-item"><div class="prog-icon" id="pi-1">○</div><div class="prog-text" id="pt-1">Dcard 身心靈版熱門</div></div>
+        <div class="prog-item"><div class="prog-icon" id="pi-2">○</div><div class="prog-text" id="pt-2">PTT WomenTalk 討論</div></div>
+        <div class="prog-item"><div class="prog-icon" id="pi-3">○</div><div class="prog-text" id="pt-3">Google Trends / YouTube</div></div>
+        <div class="prog-item"><div class="prog-icon" id="pi-4">○</div><div class="prog-text" id="pt-4">AI 交叉分析整合</div></div>
+      </div>
+
+      <button class="btn-main" id="trend-btn" onclick="runTrend()">搜尋今日趨勢</button>
+    </div>
+
+    <div id="trend-results" style="display:none">
+      <div class="out-label">今日趨勢</div>
+      <div id="trend-cards"></div>
+      <div class="direction-box">
+        <div class="dir-lbl">今日建議方向</div>
+        <div class="dir-text" id="trend-direction"></div>
+      </div>
+      <button class="btn-main" onclick="switchTab('post')">用這個趨勢生成貼文 →</button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════
+       TAB 3: 貼文生成
+  ══════════════════════════════ -->
+  <div class="panel" id="panel-post">
+
+    <div class="section">
+      <div class="sec-label"><div class="sec-label-dot" style="background:var(--coral)"></div>今天你的感受或想法</div>
+      <textarea class="input-field" id="post-feeling" rows="4"
+        placeholder="隨意寫，不需要完整句子。例如：今天靜坐後感覺有什麼鬆開了……"></textarea>
+    </div>
+
+    <div class="section">
+      <div class="sec-label"><div class="sec-label-dot" style="background:var(--champagne)"></div>內容板塊</div>
+      <div class="pills">
+        <div class="pill on" id="pillar-k" onclick="selPillar('knowledge')">A 知識科普</div>
+        <div class="pill" id="pillar-v"   onclick="selPillar('visual')">B 視覺開箱</div>
+        <div class="pill" id="pillar-p"   onclick="selPillar('personal')">C 內在分享</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="sec-label"><div class="sec-label-dot" style="background:var(--pink)"></div>格式</div>
+      <div class="pills">
+        <div class="pill on" id="fmt-carousel" onclick="selFmt('carousel')">七張 Carousel</div>
+        <div class="pill" id="fmt-single"   onclick="selFmt('single')">單篇貼文</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="sec-label"><div class="sec-label-dot" style="background:var(--green)"></div>帶入水晶（選填）</div>
+      <div class="pills">
+        <div class="pill on" id="cr-none" onclick="selCrystal('none','cr-none')">純內容</div>
+        <div class="pill" id="cr-az"   onclick="selCrystal('阿賽水晶 Azeztulite','cr-az')">阿賽水晶</div>
+        <div class="pill" id="cr-ph"   onclick="selCrystal('矽鈹石 Phenacite','cr-ph')">矽鈹石</div>
+        <div class="pill" id="cr-le"   onclick="selCrystal('列木利亞水晶','cr-le')">列木利亞</div>
+        <div class="pill" id="cr-da"   onclick="selCrystal('賽黃晶 Danburite','cr-da')">賽黃晶</div>
+      </div>
+    </div>
+
+    <button class="btn-main" id="post-btn" onclick="generatePost()">生成今日貼文</button>
+
+    <div class="spin-wrap" id="post-spin">
+      <div class="orb"></div>
+      <div class="spin-msg">光正在匯聚中……</div>
+    </div>
+
+    <div id="post-output" style="display:none">
+      <div class="out-label">今日貼文</div>
+      <div id="post-carousel-out"></div>
+      <div id="post-single-out" style="display:none"></div>
+      <button class="btn-sec" id="post-copy-btn" onclick="copyPost()">複製全部內容</button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════
+       TAB 4: 頭像
+  ══════════════════════════════ -->
+  <div class="panel" id="panel-avatar">
+
+    <div class="section">
+      <div class="sec-label"><div class="sec-label-dot" style="background:var(--champagne)"></div>頭像風格</div>
+      <div class="pills">
+        <div class="pill on" id="av-warm"  onclick="selAvStyle('warm')">暖光（香檳金）</div>
+        <div class="pill" id="av-pink"   onclick="selAvStyle('pink')">粉光</div>
+        <div class="pill" id="av-multi"  onclick="selAvStyle('multi')">四色混合</div>
+        <div class="pill" id="av-pure"   onclick="selAvStyle('pure')">純白光</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="sec-label"><div class="sec-label-dot" style="background:var(--coral)"></div>文字顯示</div>
+      <div class="pills">
+        <div class="pill on" id="av-txt-sl"  onclick="selAvText('She Light')">She Light</div>
+        <div class="pill" id="av-txt-sl2" onclick="selAvText('SL')">SL</div>
+        <div class="pill" id="av-txt-none" onclick="selAvText('')">純光（無文字）</div>
+      </div>
+    </div>
+
+    <button class="btn-main" onclick="renderAvatar()">生成頭像</button>
+
+    <div id="avatar-section" style="display:none">
+      <div class="out-label">頭像預覽</div>
+      <div class="avatar-previews">
+        <div class="avatar-item">
+          <div class="avatar-lbl">淺色</div>
+          <div class="avatar-circle">
+            <canvas id="av-light" width="240" height="240" style="width:120px;height:120px"></canvas>
+          </div>
+        </div>
+        <div class="avatar-item">
+          <div class="avatar-lbl">深色</div>
+          <div class="avatar-dark">
+            <div class="avatar-circle">
+              <canvas id="av-dark" width="240" height="240" style="width:120px;height:120px"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button class="btn-sec" onclick="downloadAvatar()">下載頭像</button>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<script>
+// ══════════════════════════════
+// STATE
+// ══════════════════════════════
+let cardStyle    = 'warm';
+let postFmt      = 'carousel';
+let postPillar   = 'knowledge';
+let crystalName  = 'none';
+let avStyle      = 'warm';
+let avText       = 'She Light';
+let trendData    = null;
+let postCopyTxt  = '';
+
+// date
+document.getElementById('today-date').textContent =
+  new Date().toLocaleDateString('zh-TW',{month:'short',day:'numeric',weekday:'short'});
+
+// ══════════════════════════════
+// BRAND CONTEXT
+// ══════════════════════════════
+const BRAND = `你是 She Light 品牌的內容創作助手。
+品牌：She Light｜內在女性力量覺醒的選品水晶品牌
+標語：光，從細胞深處透出
+核心：光由內向外透出；活得有意識是靈魂最渴望的生活方式；每一個認真向內觀察的人，正在發光；石頭是夥伴
+受眾：感覺人生停在原地渴望突破、對能量意識探索有真實興趣、認真對待自己內在變化的女性
+語言：繁體中文台灣用語，溫柔真實不說教，像一個人在分享內心旅程而不是在賣東西`;
+
+const CRYSTALS = {
+  '阿賽水晶 Azeztulite':'光之石，純淨高振動，喚醒靈魂本有的光，現貨2,000元',
+  '矽鈹石 Phenacite':'地表最高頻礦石，全脈輪開通，初次佩戴可能頭暈，吊墜8,500元',
+  '列木利亞水晶':'古文明記憶石，儲存靈性智慧，手串3,000元',
+  '賽黃晶 Danburite':'高頻心輪石，溫柔強大，打開心輪接納豐盛，手串10,000元'
+};
+
+// ══════════════════════════════
+// TAB SWITCH
+// ══════════════════════════════
+function switchTab(tab) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('show'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`panel-${tab}`).classList.add('show');
+  event.currentTarget.classList.add('active');
+}
+
+// ══════════════════════════════
+// SELECTORS
+// ══════════════════════════════
+function selStyle(el, s) {
+  cardStyle = s;
+  document.querySelectorAll('#panel-card .pill').forEach(p => p.classList.remove('on'));
+  el.classList.add('on');
+}
+function selPillar(p) {
+  postPillar = p;
+  ['k','v','p'].forEach(x =>
+    document.getElementById(`pillar-${x}`).classList.toggle('on',
+      (x==='k'&&p==='knowledge')||(x==='v'&&p==='visual')||(x==='p'&&p==='personal')));
+}
+function selFmt(f) {
+  postFmt = f;
+  ['carousel','single'].forEach(x =>
+    document.getElementById(`fmt-${x}`).classList.toggle('on', x===f));
+}
+function selCrystal(name, id) {
+  crystalName = name;
+  ['cr-none','cr-az','cr-ph','cr-le','cr-da'].forEach(p =>
+    document.getElementById(p).classList.remove('on'));
+  document.getElementById(id).classList.add('on');
+}
+function selAvStyle(s) {
+  avStyle = s;
+  ['warm','pink','multi','pure'].forEach(x =>
+    document.getElementById(`av-${x}`).classList.toggle('on', x===s));
+}
+function selAvText(t) {
+  avText = t;
+  ['sl','sl2','none'].forEach(x =>
+    document.getElementById(`av-txt-${x}`).classList.toggle('on',
+      (x==='sl'&&t==='She Light')||(x==='sl2'&&t==='SL')||(x==='none'&&t==='')));
+}
+
+// ══════════════════════════════
+// CARD MAKER
+// ══════════════════════════════
+const CARD_STYLES = {
+  warm:  { colors: [[255,232,168],[255,208,148],[252,190,168],[200,224,200]], bg: '#fdf8f2' },
+  pink:  { colors: [[255,210,220],[248,180,196],[240,200,180],[200,220,200]], bg: '#fef8f8' },
+  green: { colors: [[200,232,200],[220,240,180],[240,220,160],[210,200,230]], bg: '#f8fcf8' },
+  cool:  { colors: [[220,230,248],[200,210,240],[230,210,240],[200,230,220]], bg: '#f8f8fc' },
+};
+
+function drawCardBg(canvas, style) {
+  const ctx = canvas.getContext('2d');
+  const S = canvas.width;
+  const cx = S/2, cy = S/2;
+  ctx.clearRect(0,0,S,S);
+
+  const st = CARD_STYLES[style];
+  ctx.fillStyle = st.bg;
+  ctx.fillRect(0,0,S,S);
+
+  // 四個偏心光源——不同位置，不同顏色
+  const positions = [
+    { x:S*0.22, y:S*0.20, r:S*0.55 },
+    { x:S*0.82, y:S*0.18, r:S*0.50 },
+    { x:S*0.18, y:S*0.82, r:S*0.50 },
+    { x:S*0.80, y:S*0.80, r:S*0.48 },
+  ];
+
+  positions.forEach((pos, i) => {
+    const [r,g,b] = st.colors[i];
+    const grad = ctx.createRadialGradient(pos.x,pos.y,0,pos.x,pos.y,pos.r);
+    grad.addColorStop(0,   `rgba(${r},${g},${b},0.18)`);
+    grad.addColorStop(0.4, `rgba(${r},${g},${b},0.09)`);
+    grad.addColorStop(0.75,`rgba(${r},${g},${b},0.03)`);
+    grad.addColorStop(1,   `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0,0,S,S);
+  });
+
+  // 中央極淡暖白——讓中心比四角微亮，但不明顯
+  const center = ctx.createRadialGradient(cx,cy,0,cx,cy,S*0.4);
+  center.addColorStop(0,   'rgba(255,252,245,0.25)');
+  center.addColorStop(0.5, 'rgba(255,250,240,0.10)');
+  center.addColorStop(1,   'rgba(255,255,255,0)');
+  ctx.fillStyle = center;
+  ctx.fillRect(0,0,S,S);
+}
+
+function renderCard() {
+  const main = document.getElementById('card-main').value.trim();
+  const sub  = document.getElementById('card-sub').value.trim();
+  if (!main) { alert('請輸入文字'); return; }
+
+  const card = document.getElementById('brand-card');
+  const canvas = document.getElementById('card-canvas');
+  const size = card.offsetWidth;
+  canvas.width  = size;
+  canvas.height = size;
+  canvas.style.width  = size+'px';
+  canvas.style.height = size+'px';
+
+  drawCardBg(canvas, cardStyle);
+
+  document.getElementById('card-display-main').textContent = main;
+  document.getElementById('card-display-sub').textContent  = sub;
+  document.getElementById('card-divider').style.display    = sub ? 'block' : 'none';
+  document.getElementById('card-preview-section').style.display = 'block';
+}
+
+function downloadCard() {
+  const card = document.getElementById('brand-card');
+  const S = 1080;
+  const out = document.createElement('canvas');
+  out.width = S; out.height = S;
+  const ctx = out.getContext('2d');
+
+  // 重繪大尺寸背景
+  const tmp = document.createElement('canvas');
+  tmp.width = S; tmp.height = S;
+  drawCardBg(tmp, cardStyle);
+  ctx.drawImage(tmp,0,0);
+
+  // 角點
+  const dotData = [{x:20,y:20,c:'#e8c090'},{x:S-20,y:20,c:'#f0b0c0'},{x:20,y:S-20,c:'#a8c8a8'},{x:S-20,y:S-20,c:'#e8c090'}];
+  dotData.forEach(d => {
+    ctx.fillStyle = d.c+'88';
+    ctx.beginPath(); ctx.arc(d.x,d.y,4,0,Math.PI*2); ctx.fill();
+  });
+
+  // 品牌名
+  ctx.font = '300 28px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#c49870';
+  ctx.letterSpacing = '12px';
+  ctx.fillText('She Light', S/2+6, 52);
+
+  // 主文字
+  const main = document.getElementById('card-main').value.trim();
+  const sub  = document.getElementById('card-sub').value.trim();
+  ctx.font = `300 italic ${main.length > 20 ? 62 : 72}px 'Georgia', serif`;
+  ctx.fillStyle = '#6b4838';
+  ctx.shadowColor = 'rgba(200,150,80,0.15)';
+  ctx.shadowBlur = 10;
+
+  const lines = main.split('\n');
+  const lineH = main.length > 20 ? 80 : 92;
+  const totalH = lines.length * lineH + (sub ? 60 : 0);
+  let startY = (S - totalH) / 2;
+  lines.forEach((line, i) => {
+    ctx.fillText(line, S/2, startY + i * lineH);
+  });
+  ctx.shadowBlur = 0;
+
+  if (sub) {
+    // 分隔線
+    ctx.strokeStyle = 'rgba(200,140,80,0.4)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(S/2-40, startY+lines.length*lineH+20);
+    ctx.lineTo(S/2+40, startY+lines.length*lineH+20);
+    ctx.stroke();
+    // 副標
+    ctx.font = '300 26px Georgia, serif';
+    ctx.fillStyle = '#c49870';
+    ctx.letterSpacing = '6px';
+    ctx.fillText(sub, S/2+3, startY+lines.length*lineH+50);
+  }
+
+  const a = document.createElement('a');
+  a.download = 'shelight_card.png';
+  a.href = out.toDataURL('image/png');
+  a.click();
+}
+
+// ══════════════════════════════
+// TREND SEARCH
+// ══════════════════════════════
+function setP(n, state) {
+  const icon = document.getElementById(`pi-${n}`);
+  const text = document.getElementById(`pt-${n}`);
+  icon.className = `prog-icon ${state}`;
+  text.className = `prog-text ${state}`;
+  icon.textContent = state==='running'?'↻':state==='done'?'✓':state==='fail'?'✕':'○';
+}
+
+async function runTrend() {
+  const btn = document.getElementById('trend-btn');
+  const out  = document.getElementById('trend-results');
+  btn.disabled = true;
+  out.style.display = 'none';
+  [1,2,3,4].forEach(i => setP(i,''));
+
+  const today = new Date().toLocaleDateString('zh-TW');
+  let raw = {};
+
+  async function aiSearch(q) {
+    const r = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',max_tokens:400,
+        tools:[{type:'web_search_20250305',name:'web_search'}],
+        messages:[{role:'user',content:`搜尋：${q}\n條列3-5個今日熱門話題，繁體中文，不要其他說明。`}]
+      })
+    });
+    const d = await r.json();
+    return d.content.filter(b=>b.type==='text').map(b=>b.text).join('').trim();
+  }
+
+  setP(1,'running');
+  try { raw.dcard = await aiSearch(`Dcard 身心靈 水晶 療癒 熱門 ${today}`); setP(1,'done'); }
+  catch { raw.dcard=''; setP(1,'fail'); }
+
+  setP(2,'running');
+  try { raw.ptt = await aiSearch(`PTT WomenTalk 情緒 自我覺察 熱門 ${today}`); setP(2,'done'); }
+  catch { raw.ptt=''; setP(2,'fail'); }
+
+  setP(3,'running');
+  try { raw.ai = await aiSearch(`台灣 身心靈 星座 能量 療癒 Google Trends YouTube 熱門 ${today}`); setP(3,'done'); }
+  catch { raw.ai=''; setP(3,'fail'); }
+
+  setP(4,'running');
+  try {
+    const r2 = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',max_tokens:800,
+        messages:[{role:'user',content:`${BRAND}\n今天：${today}\n\nDcard：${raw.dcard||'無'}\nPTT：${raw.ptt||'無'}\nAI：${raw.ai||'無'}\n\n請交叉分析，嚴格輸出JSON：{"trends":[{"source":"來源","topic":"話題15字內","insight":"心理需求2句","hook":"She Light鉤子句"},{"source":"","topic":"","insight":"","hook":""},{"source":"","topic":"","insight":"","hook":""}],"todayDirection":"今日建議3句"}`}]
+      })
+    });
+    const d2 = await r2.json();
+    const text = d2.content.filter(b=>b.type==='text').map(b=>b.text).join('');
+    trendData = parseJSON(text);
+    setP(4,'done');
+
+    const container = document.getElementById('trend-cards');
+    container.innerHTML = '';
+    const colors=['var(--champagne)','var(--coral)','var(--pink)'];
+    trendData.trends.forEach((t,i) => {
+      const c = document.createElement('div');
+      c.className = 'trend-card';
+      c.style.borderLeftColor = colors[i%3];
+      c.innerHTML = `<div class="trend-src">${t.source}</div>
+        <div class="trend-topic">${t.topic}</div>
+        <div class="trend-ins">${t.insight}</div>
+        <div class="trend-hook"><span class="trend-hlbl">She Light 鉤子</span>
+        <div class="trend-htxt">${t.hook}</div></div>`;
+      container.appendChild(c);
+    });
+    document.getElementById('trend-direction').textContent = trendData.todayDirection;
+    out.style.display = 'block';
+  } catch(e) {
+    setP(4,'fail');
+    document.getElementById('trend-cards').innerHTML = `<div class="err-box">分析失敗，請再試一次。</div>`;
+    out.style.display = 'block';
+  }
+
+  btn.disabled = false;
+}
+
+// ══════════════════════════════
+// POST GENERATOR
+// ══════════════════════════════
+async function generatePost() {
+  const btn  = document.getElementById('post-btn');
+  const spin = document.getElementById('post-spin');
+  const out  = document.getElementById('post-output');
+  btn.disabled = true;
+  spin.classList.add('show');
+  out.style.display = 'none';
+
+  const feeling = document.getElementById('post-feeling').value.trim();
+  const trendCtx = trendData ? JSON.stringify(trendData) : '';
+  const crystalCtx = crystalName!=='none' ? `帶入水晶：${CRYSTALS[crystalName]}` : '';
+
+  const PILLAR_GUIDE = {
+    knowledge: `板塊A 知識科普：重點是讓人認識這顆水晶、為什麼稀有、頻率原理。用 She Light 語氣說（不是功效清單，是「它為什麼進入我的生命」）。第一張鉤子要讓人好奇想了解。`,
+    visual:    `板塊B 視覺開箱：重點是描述水晶的光與美，適合搭配照片或短影音。文字要讓人「看見」光折射的畫面。語氣輕盈，像在分享一個驚喜。`,
+    personal:  `板塊C 內在分享：重點是真實的內在體驗，佩戴時感覺到什麼、靜坐後的觀察。peer-to-peer 語氣，像朋友在分享，不是在教學。讓人感覺「這說中我了」。`
+  };
+
+  const HASHTAG_GUIDE = `
+結尾 hashtag 中英並用，從以下選 5-8 個最相關的：
+中文：#高頻水晶 #矽鈹石 #捷克隕石 #身心靈 #脈輪療癒 #能量水晶 #心輪 #阿賽水晶 #賽黃晶 #SheLight
+英文：#phenacite #herderite #moldavite #highvibecrystals #synergy12 #azeztulite #danburite #crystalhealing #highfrequencycrystals`;
+
+  const base = `${BRAND}\n${trendCtx?'今日趨勢：'+trendCtx:''}\n創辦人感受：${feeling||'（未填）'}\n${crystalCtx}\n\n內容方向：${PILLAR_GUIDE[postPillar]}`;
+
+  try {
+    if (postFmt==='carousel') {
+      const r = await callClaude(base+`\n\n生成七張 Carousel，嚴格輸出JSON：{"slides":[{"num":"第1張","role":"主視覺鉤子","content":""},{"num":"第2張","role":"它是什麼／為什麼稀有","content":""},{"num":"第3張","role":"說中我了","content":""},{"num":"第4張","role":"親身感受","content":""},{"num":"第5張","role":"它做什麼","content":""},{"num":"第6張","role":"適合誰","content":""},{"num":"第7張","role":"存起來","content":""}],"caption":"貼文文案"}\n\n${HASHTAG_GUIDE}`);
+      const p = parseJSON(r);
+      const wrap = document.getElementById('post-carousel-out');
+      wrap.innerHTML = '';
+      p.slides.forEach(s => {
+        const c = document.createElement('div');
+        c.className = 'slide-card';
+        c.innerHTML = `<div class="slide-num">${s.num}</div><div class="slide-role">${s.role}</div><div class="slide-text">${s.content}</div>`;
+        wrap.appendChild(c);
+      });
+      wrap.innerHTML += `<div class="cap-card"><div class="cap-label">貼文文案</div><div class="cap-text">${p.caption}</div></div>`;
+      document.getElementById('post-carousel-out').style.display='block';
+      document.getElementById('post-single-out').style.display='none';
+      postCopyTxt = p.slides.map(s=>`【${s.num}】${s.role}\n${s.content}`).join('\n\n')+'\n\n【貼文文案】\n'+p.caption;
+    } else {
+      const r = await callClaude(base+`\n\n生成單篇貼文，嚴格輸出JSON：{"headline":"開頭鉤子","body":"內文3-4段","cta":"結尾CTA含hashtag"}\n\n${HASHTAG_GUIDE}`);
+      const p = parseJSON(r);
+      document.getElementById('post-single-out').innerHTML = `
+        <div class="post-block">
+          <div class="psec-lbl">開頭鉤子</div><div class="p-head">${p.headline}</div>
+          <div class="psec-lbl">內文</div><div class="p-body">${p.body}</div>
+          <div class="psec-lbl">結尾 CTA</div><div class="p-cta">${p.cta}</div>
+        </div>`;
+      document.getElementById('post-carousel-out').style.display='none';
+      document.getElementById('post-single-out').style.display='block';
+      postCopyTxt = `${p.headline}\n\n${p.body}\n\n${p.cta}`;
+    }
+    out.style.display='block';
+  } catch(e) {
+    document.getElementById('post-carousel-out').innerHTML = `<div class="err-box">生成失敗，請再試一次。</div>`;
+    document.getElementById('post-carousel-out').style.display='block';
+    out.style.display='block';
+  }
+
+  spin.classList.remove('show');
+  btn.disabled = false;
+}
+
+function copyPost() {
+  navigator.clipboard.writeText(postCopyTxt).then(()=>{
+    const btn = document.getElementById('post-copy-btn');
+    btn.textContent='已複製 ✓'; btn.classList.add('copied');
+    setTimeout(()=>{btn.textContent='複製全部內容';btn.classList.remove('copied');},2000);
+  });
+}
+
+// ══════════════════════════════
+// AVATAR MAKER
+// ══════════════════════════════
+const AV_STYLES = {
+  warm:  [[255,224,160],[252,190,168],[200,224,200],[244,204,170]],
+  pink:  [[255,200,210],[248,170,188],[220,190,230],[200,220,200]],
+  multi: [[255,216,148],[248,176,190],[240,158,128],[180,216,182]],
+  pure:  [[255,248,235],[255,240,220],[248,235,210],[240,230,210]],
+};
+
+function drawAvatarCanvas(canvas, style, text) {
+  const ctx = canvas.getContext('2d');
+  const S = canvas.width;
+  const cx = S/2, cy = S/2;
+  ctx.clearRect(0,0,S,S);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx,cy,S/2-1,0,Math.PI*2);
+  ctx.clip();
+
+  // 底色
+  ctx.fillStyle = '#fefcf8';
+  ctx.fillRect(0,0,S,S);
+
+  // 邊緣漸暗——製造空間深度
+  const vignette = ctx.createRadialGradient(cx,cy,S*0.25,cx,cy,S*0.5);
+  vignette.addColorStop(0,   'rgba(253,248,242,1)');
+  vignette.addColorStop(0.6, 'rgba(248,240,230,1)');
+  vignette.addColorStop(0.85,'rgba(238,228,215,1)');
+  vignette.addColorStop(1,   'rgba(225,212,198,1)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0,0,S,S);
+
+  // 四個偏心光源——關鍵：位置不在中心，互相融合後沒有單一中心
+  const colors = AV_STYLES[style];
+  const sources = [
+    { x:S*0.28, y:S*0.25, r:S*0.55, ci:0 },
+    { x:S*0.76, y:S*0.22, r:S*0.52, ci:1 },
+    { x:S*0.24, y:S*0.78, r:S*0.50, ci:2 },
+    { x:S*0.74, y:S*0.76, r:S*0.50, ci:3 },
+  ];
+
+  sources.forEach(src => {
+    const [r,g,b] = colors[src.ci];
+    const grad = ctx.createRadialGradient(src.x,src.y,0,src.x,src.y,src.r);
+    grad.addColorStop(0,   `rgba(${r},${g},${b},0.22)`);
+    grad.addColorStop(0.35,`rgba(${r},${g},${b},0.12)`);
+    grad.addColorStop(0.65,`rgba(${r},${g},${b},0.04)`);
+    grad.addColorStop(1,   `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0,0,S,S);
+  });
+
+  // 第五個光源：正中間極淡——讓整體微微透亮
+  const mid = ctx.createRadialGradient(cx,cy*0.95,0,cx,cy,S*0.42);
+  mid.addColorStop(0,   'rgba(255,248,235,0.18)');
+  mid.addColorStop(0.45,'rgba(255,242,220,0.08)');
+  mid.addColorStop(1,   'rgba(255,255,255,0)');
+  ctx.fillStyle = mid;
+  ctx.fillRect(0,0,S,S);
+
+  // 文字
+  if (text) {
+    const fontSize = text==='SL' ? S*0.28 : S*0.10;
+    ctx.font = `300 ${fontSize}px Georgia, serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(180,130,60,0.20)';
+    ctx.shadowBlur = text==='SL' ? 20 : 14;
+    ctx.fillStyle = '#a87840';
+    ctx.fillText(text, cx, cy);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(180,140,70,0.15)';
+    ctx.fillText(text, cx-0.4, cy-0.6);
+  }
+
+  ctx.restore();
+}
+
+function renderAvatar() {
+  ['av-light','av-dark'].forEach(id => {
+    drawAvatarCanvas(document.getElementById(id), avStyle, avText);
+  });
+  document.getElementById('avatar-section').style.display='block';
+}
+
+function downloadAvatar() {
+  const big = document.createElement('canvas');
+  big.width=800;big.height=800;
+  drawAvatarCanvas(big, avStyle, avText);
+  const out = document.createElement('canvas');
+  out.width=800;out.height=800;
+  const ctx = out.getContext('2d');
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(400,400,400,0,Math.PI*2);
+  ctx.clip();
+  ctx.drawImage(big,0,0);
+  ctx.restore();
+  const a = document.createElement('a');
+  a.download='shelight_avatar.png';
+  a.href=out.toDataURL('image/png');
+  a.click();
+}
+
+// ══════════════════════════════
+// HELPERS
+// ══════════════════════════════
+async function callClaude(prompt) {
+  const r = await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:prompt}]})
+  });
+  const d = await r.json();
+  return d.content.filter(b=>b.type==='text').map(b=>b.text).join('');
+}
+
+function parseJSON(text) {
+  const clean = text.replace(/```json|```/g,'').trim();
+  const match = clean.match(/\{[\s\S]*\}/);
+  return JSON.parse(match?match[0]:clean);
+}
+
+// 初始化卡片預覽
+window.addEventListener('load', () => {
+  const card = document.getElementById('brand-card');
+  const canvas = document.getElementById('card-canvas');
+  const size = card.offsetWidth;
+  canvas.width=size; canvas.height=size;
+  canvas.style.width=size+'px'; canvas.style.height=size+'px';
+  drawCardBg(canvas, cardStyle);
+});
+</script>
+</body>
+</html>
