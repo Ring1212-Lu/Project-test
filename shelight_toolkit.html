@@ -1400,13 +1400,16 @@ function drawAvatarCanvas(canvas, style, text) {
       ctx.font = `300 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
       drawGoldText(ctx, text, cx, cy, fontSize, spacing);
     } else {
-      // 完整字（如 She Light）：拆兩行放大、加粗，縮到大頭貼尺寸仍清楚
-      const words = text.split(' ');
-      const fontSize = S*0.175, spacing = S*0.004;
+      // 完整字（如 She Light）：單行左右放大、撐滿安全區寬度
+      const maxW = S*0.80, k = 0.035, ref = 100;
+      ctx.font = `400 italic ${ref}px "Cormorant Garamond", "Noto Serif TC", serif`;
+      const chars = [...text];
+      let sum = 0; chars.forEach(ch => sum += ctx.measureText(ch).width);
+      const wRef = sum + (chars.length-1)*ref*k;
+      const fontSize = Math.min(ref * maxW / wRef, S*0.21);
+      const spacing = fontSize*k;
       ctx.font = `400 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
-      const lh = fontSize*1.04;
-      const startY = cy - (words.length-1)*lh/2;
-      words.forEach((w,i) => drawGoldText(ctx, w, cx, startY + i*lh, fontSize, spacing));
+      drawGoldText(ctx, text, cx, cy, fontSize, spacing);
     }
   }
 
