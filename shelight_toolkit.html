@@ -782,11 +782,11 @@ function drawGoldText(ctx, text, cx, y, fontSize, spacing) {
   o.font = ctx.font;
   o.textBaseline = 'middle';
 
-  // 對比襯底：字後一層柔和深色，讓金字從明亮球面浮出，縮成大頭貼也清楚
+  // 對比襯底：字後一層柔和深色，讓金字從明亮球面浮出（收緊模糊、保持清晰）
   o.save();
-  o.fillStyle = 'rgba(72,46,18,0.5)';
-  o.shadowColor = 'rgba(58,36,12,0.55)';
-  o.shadowBlur = fontSize*0.13;
+  o.fillStyle = 'rgba(72,46,18,0.42)';
+  o.shadowColor = 'rgba(58,36,12,0.5)';
+  o.shadowBlur = fontSize*0.045;
   drawSpacedLine(o, text, cx, y, spacing);
   o.shadowBlur = 0;
   o.restore();
@@ -807,13 +807,13 @@ function drawGoldText(ctx, text, cx, y, fontSize, spacing) {
   g.addColorStop(0.80, '#a8722a');
   g.addColorStop(1.00, '#80571e');
   o.fillStyle = g;
-  // 加粗：四向微位移疊繪，讓細斜體筆畫縮圖後仍扎實
-  const fat = fontSize*0.016;
+  // 輕微加粗：四向微位移，讓細斜體筆畫縮圖後仍扎實（量小以保持邊緣清晰）
+  const fat = fontSize*0.008;
   o.shadowBlur = 0;
-  [[-fat,0],[fat,0],[0,-fat],[0,fat],[-fat*0.7,-fat*0.7],[fat*0.7,fat*0.7]]
+  [[-fat,0],[fat,0],[0,-fat],[0,fat]]
     .forEach(([dx,dy]) => drawSpacedLine(o, text, cx+dx, y+dy, spacing));
-  o.shadowColor = 'rgba(208,158,80,0.4)';
-  o.shadowBlur = fontSize*0.16;
+  o.shadowColor = 'rgba(208,158,80,0.3)';
+  o.shadowBlur = fontSize*0.05;
   drawSpacedLine(o, text, cx, y, spacing);
   o.shadowBlur = 0;
 
@@ -1400,8 +1400,8 @@ function drawAvatarCanvas(canvas, style, text) {
       ctx.font = `300 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
       drawGoldText(ctx, text, cx, cy, fontSize, spacing);
     } else {
-      // 完整字（如 She Light）：單行左右放大、撐滿安全區寬度
-      const maxW = S*0.80, k = 0.035, ref = 100;
+      // 完整字（如 She Light）：單行、適度放大（不撐滿，留更多呼吸感）
+      const maxW = S*0.66, k = 0.035, ref = 100;
       ctx.font = `400 italic ${ref}px "Cormorant Garamond", "Noto Serif TC", serif`;
       const chars = [...text];
       let sum = 0; chars.forEach(ch => sum += ctx.measureText(ch).width);
