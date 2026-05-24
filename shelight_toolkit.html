@@ -1149,9 +1149,9 @@ function drawAvatarCanvas(canvas, style, text) {
   // ── 暖金豐盛光暈：填滿中央、去除冷清，帶來溫暖飽滿的光 ──
   ctx.globalCompositeOperation = 'lighter';
   const warmGlow = ctx.createRadialGradient(cx*0.96, cy*0.92, 0, cx, cy, S*0.74);
-  warmGlow.addColorStop(0.00, 'rgba(255,226,170,0.20)');
-  warmGlow.addColorStop(0.45, 'rgba(255,214,162,0.10)');
-  warmGlow.addColorStop(1.00, 'rgba(255,202,150,0)');
+  warmGlow.addColorStop(0.00, 'rgba(255,228,176,0.13)');
+  warmGlow.addColorStop(0.45, 'rgba(255,216,166,0.07)');
+  warmGlow.addColorStop(1.00, 'rgba(255,204,152,0)');
   ctx.fillStyle = warmGlow;
   ctx.fillRect(0,0,S,S);
 
@@ -1160,13 +1160,13 @@ function drawAvatarCanvas(canvas, style, text) {
   ctx.globalCompositeOperation = 'lighter';
   ctx.translate(lx, ly);
   const baseA = Math.atan2(cy - ly, cx - lx);
-  const RAYN = 22, spread = 1.9, rayLen = S * 1.25;
+  const RAYN = 13, spread = 1.7, rayLen = S * 1.0;
   const rayCols = [[255,226,172],[255,200,180],[255,198,216],[200,234,210],[208,208,246],[255,240,210]];
-  const rayA = Math.min(0.20, 0.09 + st.prism * 0.5);
+  const rayA = Math.min(0.085, 0.03 + st.prism * 0.22);
   for (let i = 0; i < RAYN; i++) {
     const t = i / (RAYN - 1) - 0.5;
     const ang = baseA + t * spread + (i % 2 ? 0.03 : -0.03);
-    const halfW = S * (0.014 + ((i * 7) % 4) * 0.006);
+    const halfW = S * (0.010 + ((i * 7) % 4) * 0.004);
     const col = rayCols[i % rayCols.length];
     ctx.save();
     ctx.rotate(ang);
@@ -1245,25 +1245,35 @@ function drawAvatarCanvas(canvas, style, text) {
 
   ctx.globalCompositeOperation = 'source-over';
 
-  // 鏡面高光：左上一個集中亮點，讓球面有光澤感
-  const spec = ctx.createRadialGradient(lx*0.94, ly*0.92, 0, lx*0.94, ly*0.92, S*0.15);
-  spec.addColorStop(0,    'rgba(255,255,255,0.42)');
-  spec.addColorStop(0.45, 'rgba(255,255,255,0.10)');
-  spec.addColorStop(1,    'rgba(255,255,255,0)');
-  ctx.fillStyle = spec;
+  // ── 玻璃光澤：上方一道弧形反光，帶來水潤透明的玻璃感 ──
+  ctx.globalCompositeOperation = 'screen';
+  ctx.save();
+  ctx.translate(cx, S*0.27);
+  ctx.scale(1.0, 0.50);
+  const sheen = ctx.createRadialGradient(0,0,0,0,0,S*0.34);
+  sheen.addColorStop(0.00, 'rgba(255,255,255,0.55)');
+  sheen.addColorStop(0.50, 'rgba(255,255,255,0.13)');
+  sheen.addColorStop(1.00, 'rgba(255,255,255,0)');
+  ctx.fillStyle = sheen;
+  ctx.beginPath(); ctx.arc(0,0,S*0.34,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // 焦散光：光穿過玻璃在右下聚成一束亮光，更顯通透水潤
+  ctx.globalCompositeOperation = 'screen';
+  const caus = ctx.createRadialGradient(cx*1.04, S*0.74, 0, cx*1.04, S*0.74, S*0.30);
+  caus.addColorStop(0.00, 'rgba(255,253,244,0.45)');
+  caus.addColorStop(0.50, 'rgba(255,250,238,0.10)');
+  caus.addColorStop(1.00, 'rgba(255,255,255,0)');
+  ctx.fillStyle = caus;
   ctx.fillRect(0,0,S,S);
 
-  // 微光點點——散落的光粒，帶來如珠寶般的豐盛閃爍
+  // 微光點點——少量散落光粒，保留珠寶感但不搶玻璃透明
   ctx.globalCompositeOperation = 'lighter';
-  const sparks = [
-    [0.36,0.30,1.0],[0.50,0.23,0.7],[0.62,0.33,0.85],[0.30,0.48,0.6],
-    [0.68,0.58,0.7],[0.52,0.70,0.6],[0.44,0.42,0.5],[0.74,0.46,0.55],
-  ];
-  sparks.forEach(([sxr,syr,sc]) => {
-    const sxp = S*sxr, syp = S*syr, sr = S*0.055*sc;
+  [[0.40,0.30,0.8],[0.62,0.34,0.7],[0.52,0.66,0.55],[0.70,0.54,0.5]].forEach(([sxr,syr,sc]) => {
+    const sxp = S*sxr, syp = S*syr, sr = S*0.045*sc;
     const sg = ctx.createRadialGradient(sxp,syp,0,sxp,syp,sr);
-    sg.addColorStop(0.00, `rgba(255,250,236,${(0.85*sc).toFixed(3)})`);
-    sg.addColorStop(0.35, `rgba(255,238,206,${(0.22*sc).toFixed(3)})`);
+    sg.addColorStop(0.00, `rgba(255,252,240,${(0.7*sc).toFixed(3)})`);
+    sg.addColorStop(0.35, `rgba(255,242,214,${(0.16*sc).toFixed(3)})`);
     sg.addColorStop(1.00, 'rgba(255,255,255,0)');
     ctx.fillStyle = sg;
     ctx.beginPath(); ctx.arc(sxp,syp,sr,0,Math.PI*2); ctx.fill();
@@ -1271,12 +1281,32 @@ function drawAvatarCanvas(canvas, style, text) {
 
   ctx.globalCompositeOperation = 'source-over';
 
-  // 邊緣暗角——收邊，凸顯由內而外的透光
-  const vig = ctx.createRadialGradient(cx, cy, S*0.33, cx, cy, S*0.5);
+  // 邊緣暗角——收邊，凸顯玻璃厚度
+  const vig = ctx.createRadialGradient(cx, cy, S*0.34, cx, cy, S*0.5);
   vig.addColorStop(0,   `rgba(${st.vig[0]},${st.vig[1]},${st.vig[2]},0)`);
-  vig.addColorStop(1,   `rgba(${st.vig[0]},${st.vig[1]},${st.vig[2]},${(st.vig[3]*0.7).toFixed(3)})`);
+  vig.addColorStop(1,   `rgba(${st.vig[0]},${st.vig[1]},${st.vig[2]},${(st.vig[3]*0.8).toFixed(3)})`);
   ctx.fillStyle = vig;
   ctx.fillRect(0,0,S,S);
+
+  // 折射亮邊：邊緣內側一圈亮光，像玻璃球邊緣的折射，強化透明感
+  ctx.globalCompositeOperation = 'screen';
+  const refr = ctx.createRadialGradient(cx, cy, R*0.80, cx, cy, R);
+  refr.addColorStop(0.00, 'rgba(255,255,255,0)');
+  refr.addColorStop(0.86, 'rgba(255,255,255,0)');
+  refr.addColorStop(0.945,'rgba(255,255,255,0.40)');
+  refr.addColorStop(0.99, 'rgba(255,255,255,0.08)');
+  refr.addColorStop(1.00, 'rgba(255,255,255,0)');
+  ctx.fillStyle = refr;
+  ctx.fillRect(0,0,S,S);
+
+  // 晶亮反光點：左上一個集中的水潤高光（最後畫，最清脆）
+  ctx.globalCompositeOperation = 'source-over';
+  const cl = ctx.createRadialGradient(lx*0.92, ly*0.84, 0, lx*0.92, ly*0.84, S*0.072);
+  cl.addColorStop(0.00, 'rgba(255,255,255,0.95)');
+  cl.addColorStop(0.45, 'rgba(255,255,255,0.30)');
+  cl.addColorStop(1.00, 'rgba(255,255,255,0)');
+  ctx.fillStyle = cl;
+  ctx.beginPath(); ctx.arc(lx*0.92, ly*0.84, S*0.072, 0, Math.PI*2); ctx.fill();
 
   // 文字
   if (text) {
