@@ -786,29 +786,38 @@ function drawGoldText(ctx, text, cx, y, fontSize, spacing) {
 
   const top = y - fontSize*0.56, bot = y + fontSize*0.60;
 
-  // 對比襯底：字後一層柔和深色，讓金字從明亮球面浮出
+  // 對比襯底：字後較深的襯底，讓金字從明亮球面清楚浮出
   o.save();
-  o.fillStyle = 'rgba(70,45,18,0.40)';
-  o.shadowColor = 'rgba(56,35,12,0.5)';
-  o.shadowBlur = fontSize*0.04;
+  o.fillStyle = 'rgba(56,36,12,0.6)';
+  o.shadowColor = 'rgba(46,28,10,0.6)';
+  o.shadowBlur = fontSize*0.06;
   drawSpacedLine(o, text, cx, y, spacing);
   o.restore();
 
+  // 細暗描邊：四向微位移的深色，增加邊界對比（超取樣下仍平滑）
+  o.fillStyle = 'rgba(60,40,14,0.7)';
+  const ow = fontSize*0.012;
+  [[-ow,0],[ow,0],[0,-ow],[0,ow]]
+    .forEach(([dx,dy]) => drawSpacedLine(o, text, cx+dx, y+dy, spacing));
+
   // 反向漸層複本（下移一點）作為斜角，營造燙金的立體邊
   const gb = o.createLinearGradient(0, top, 0, bot);
-  gb.addColorStop(0.00, '#8a6a23');
-  gb.addColorStop(0.50, '#f3e4a3');
-  gb.addColorStop(1.00, '#7a551b');
+  gb.addColorStop(0.00, '#5a3f10');
+  gb.addColorStop(0.50, '#c79a3a');
+  gb.addColorStop(1.00, '#4a330c');
   o.fillStyle = gb;
   drawSpacedLine(o, text, cx, y + fontSize*0.020, spacing);
 
-  // 金屬主漸層（精品金，雙反光帶）
+  // 金屬主漸層（飽和深金，反光帶為金色而非近白，確保清晰）
   const g = o.createLinearGradient(0, top, 0, bot);
-  g.addColorStop(0.00, '#bf953f');
-  g.addColorStop(0.25, '#fcf6ba');
-  g.addColorStop(0.50, '#b38728');
-  g.addColorStop(0.75, '#fbf5b7');
-  g.addColorStop(1.00, '#aa771c');
+  g.addColorStop(0.00, '#8a5e16');
+  g.addColorStop(0.16, '#caa23a');
+  g.addColorStop(0.34, '#f0d06a');
+  g.addColorStop(0.50, '#b07e22');
+  g.addColorStop(0.58, '#8f6417');
+  g.addColorStop(0.72, '#e6c259');
+  g.addColorStop(0.86, '#9c6e1b');
+  g.addColorStop(1.00, '#5f420f');
   o.fillStyle = g;
   drawSpacedLine(o, text, cx, y, spacing);
 
