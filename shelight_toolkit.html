@@ -1111,33 +1111,87 @@ function drawAvatarCanvas(canvas, style, text) {
 
   const st = AV_STYLES[style] || AV_STYLES.warm;
   const mix = (a,b,t) => a.map((v,i)=>Math.round(v+(b[i]-v)*t)).join(',');
+  const hi      = mix(st.base, [255,255,255], 0.55);   // 受光高光
+  const shadow  = mix(st.edge, [74,54,40], 0.55);      // 暗面陰影
+  const lx = S*0.39, ly = S*0.35;                      // 主光源（左上）
 
-  // 底色：偏心亮點 → 較深邊緣，先建立縱深（光營造空間感）
-  const base = ctx.createRadialGradient(cx*0.84, cy*0.76, 0, cx, cy, S*0.68);
-  base.addColorStop(0,    `rgb(${st.base.join(',')})`);
-  base.addColorStop(0.52, `rgb(${mix(st.base, st.edge, 0.35)})`);
-  base.addColorStop(1,    `rgb(${st.edge.join(',')})`);
-  ctx.fillStyle = base;
+  // ── 方向性球體底色：左上受光、右下沉入陰影，建立立體量感與空間感 ──
+  const sphere = ctx.createRadialGradient(lx, ly, S*0.03, lx, ly, S*0.98);
+  sphere.addColorStop(0.00, `rgb(${hi})`);
+  sphere.addColorStop(0.26, `rgb(${st.base.join(',')})`);
+  sphere.addColorStop(0.58, `rgb(${mix(st.base, st.edge, 0.65)})`);
+  sphere.addColorStop(0.84, `rgb(${st.edge.join(',')})`);
+  sphere.addColorStop(1.00, `rgb(${shadow})`);
+  ctx.fillStyle = sphere;
   ctx.fillRect(0,0,S,S);
 
-  // ── 偏心彩光：加色混合但放輕，融合後無單一中心 ──
-  ctx.globalCompositeOperation = 'lighter';
+  // ── 偏心彩光：normal 混合鋪上真實色相（飽滿不死白），再疊一層微光 ──
+  ctx.globalCompositeOperation = 'source-over';
   st.blooms.forEach(b => {
-    const a = b.a * 0.55;
+    const a = b.a * 0.50;
     const g = ctx.createRadialGradient(S*b.x, S*b.y, 0, S*b.x, S*b.y, S*b.r);
     g.addColorStop(0,    `rgba(${b.c.join(',')},${a.toFixed(3)})`);
-    g.addColorStop(0.40, `rgba(${b.c.join(',')},${(a*0.4).toFixed(3)})`);
+    g.addColorStop(0.45, `rgba(${b.c.join(',')},${(a*0.45).toFixed(3)})`);
     g.addColorStop(1,    `rgba(${b.c.join(',')},0)`);
     ctx.fillStyle = g;
     ctx.fillRect(0,0,S,S);
   });
+  ctx.globalCompositeOperation = 'lighter';
+  st.blooms.forEach(b => {
+    const a = b.a * 0.16;
+    const g = ctx.createRadialGradient(S*b.x, S*b.y, 0, S*b.x, S*b.y, S*b.r*0.8);
+    g.addColorStop(0,    `rgba(${b.c.join(',')},${a.toFixed(3)})`);
+    g.addColorStop(1,    `rgba(${b.c.join(',')},0)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,S,S);
+  });
+
+  // ── 暖金豐盛光暈：填滿中央、去除冷清，帶來溫暖飽滿的光 ──
+  ctx.globalCompositeOperation = 'lighter';
+  const warmGlow = ctx.createRadialGradient(cx*0.96, cy*0.92, 0, cx, cy, S*0.74);
+  warmGlow.addColorStop(0.00, 'rgba(255,226,170,0.20)');
+  warmGlow.addColorStop(0.45, 'rgba(255,214,162,0.10)');
+  warmGlow.addColorStop(1.00, 'rgba(255,202,150,0)');
+  ctx.fillStyle = warmGlow;
+  ctx.fillRect(0,0,S,S);
+
+  // ── 光束（god rays）：自左上光源呈扇形灑入，填滿空間、帶來豐盛的光感 ──
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.translate(lx, ly);
+  const baseA = Math.atan2(cy - ly, cx - lx);
+  const RAYN = 22, spread = 1.9, rayLen = S * 1.25;
+  const rayCols = [[255,226,172],[255,200,180],[255,198,216],[200,234,210],[208,208,246],[255,240,210]];
+  const rayA = Math.min(0.20, 0.09 + st.prism * 0.5);
+  for (let i = 0; i < RAYN; i++) {
+    const t = i / (RAYN - 1) - 0.5;
+    const ang = baseA + t * spread + (i % 2 ? 0.03 : -0.03);
+    const halfW = S * (0.014 + ((i * 7) % 4) * 0.006);
+    const col = rayCols[i % rayCols.length];
+    ctx.save();
+    ctx.rotate(ang);
+    const g = ctx.createLinearGradient(0, 0, rayLen, 0);
+    g.addColorStop(0.00, `rgba(${col.join(',')},0)`);
+    g.addColorStop(0.12, `rgba(${col.join(',')},${rayA.toFixed(3)})`);
+    g.addColorStop(0.55, `rgba(${col.join(',')},${(rayA * 0.45).toFixed(3)})`);
+    g.addColorStop(1.00, `rgba(${col.join(',')},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(rayLen, -halfW);
+    ctx.lineTo(rayLen, halfW);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
 
   // ── 虹彩稜光：水晶折射般的夢幻虹彩 ──
   if (st.prism > 0) {
     // 1) 偏心放射虹彩（像肥皂泡 / 水晶折射，screen 保持透亮）
     ctx.globalCompositeOperation = 'screen';
     const aR = Math.min(0.62, st.prism * 3);
-    const px = S*0.64, py = S*0.40;
+    const px = S*0.62, py = S*0.40;
     const rad = ctx.createRadialGradient(px, py, S*0.06, px, py, S*0.72);
     rad.addColorStop(0.00, 'rgba(255,255,255,0)');
     rad.addColorStop(0.28, `rgba(255,176,206,${aR.toFixed(3)})`);
@@ -1151,7 +1205,7 @@ function drawAvatarCanvas(canvas, style, text) {
 
     // 2) 對角虹彩光帶（normal 混合讓色相清楚浮現）
     ctx.globalCompositeOperation = 'source-over';
-    const aD = Math.min(0.32, st.prism * 1.7);
+    const aD = Math.min(0.30, st.prism * 1.6);
     const lg = ctx.createLinearGradient(S*0.08, S*0.95, S*0.92, S*0.12);
     lg.addColorStop(0.00, 'rgba(255,255,255,0)');
     PRISM_STOPS.forEach((c,i) =>
@@ -1161,31 +1215,66 @@ function drawAvatarCanvas(canvas, style, text) {
     ctx.fillRect(0,0,S,S);
   }
 
-  // 內透光核（偏心）——「光，從細胞深處透出」，放輕避免死白
+  // 內透光核（貼近受光面、放輕）——「光，從細胞深處透出」
   ctx.globalCompositeOperation = 'lighter';
-  const coreX = cx*0.88, coreY = cy*0.78;
-  const core = ctx.createRadialGradient(coreX, coreY, 0, coreX, coreY, S*0.46);
-  core.addColorStop(0,    `rgba(${st.core.join(',')},0.40)`);
-  core.addColorStop(0.30, `rgba(${st.core.join(',')},0.16)`);
+  const core = ctx.createRadialGradient(lx, ly, 0, lx, ly, S*0.40);
+  core.addColorStop(0,    `rgba(${st.core.join(',')},0.22)`);
+  core.addColorStop(0.32, `rgba(${st.core.join(',')},0.08)`);
   core.addColorStop(1,    `rgba(${st.core.join(',')},0)`);
   ctx.fillStyle = core;
   ctx.fillRect(0,0,S,S);
 
+  // ── 暗面：以 multiply 從受光面向右下加深，做出明暗交界（立體關鍵）──
+  ctx.globalCompositeOperation = 'multiply';
+  const sh = ctx.createRadialGradient(lx, ly, S*0.30, lx, ly, S*1.02);
+  sh.addColorStop(0.00, `rgba(${shadow},0)`);
+  sh.addColorStop(0.55, `rgba(${shadow},0)`);
+  sh.addColorStop(0.80, `rgba(${shadow},0.22)`);
+  sh.addColorStop(1.00, `rgba(${shadow},0.55)`);
+  ctx.fillStyle = sh;
+  ctx.fillRect(0,0,S,S);
+
+  // 背光描邊：右下內緣補一道微光，讓球體和背景分離、空間更深
+  ctx.globalCompositeOperation = 'lighter';
+  const rim = ctx.createRadialGradient(S*0.86, S*0.88, S*0.04, S*0.86, S*0.88, S*0.5);
+  rim.addColorStop(0.00, 'rgba(255,250,240,0.26)');
+  rim.addColorStop(0.45, 'rgba(255,248,236,0.06)');
+  rim.addColorStop(1.00, 'rgba(255,255,255,0)');
+  ctx.fillStyle = rim;
+  ctx.fillRect(0,0,S,S);
+
   ctx.globalCompositeOperation = 'source-over';
 
-  // 頂部高光——讓整體像一顆透光的球體
-  const spec = ctx.createRadialGradient(cx*0.70, cy*0.40, 0, cx*0.70, cy*0.40, S*0.34);
-  spec.addColorStop(0,  'rgba(255,255,255,0.28)');
-  spec.addColorStop(0.5,'rgba(255,255,255,0.05)');
-  spec.addColorStop(1,  'rgba(255,255,255,0)');
+  // 鏡面高光：左上一個集中亮點，讓球面有光澤感
+  const spec = ctx.createRadialGradient(lx*0.94, ly*0.92, 0, lx*0.94, ly*0.92, S*0.15);
+  spec.addColorStop(0,    'rgba(255,255,255,0.42)');
+  spec.addColorStop(0.45, 'rgba(255,255,255,0.10)');
+  spec.addColorStop(1,    'rgba(255,255,255,0)');
   ctx.fillStyle = spec;
   ctx.fillRect(0,0,S,S);
 
-  // 邊緣暗角——把光收進來，凸顯由內而外的透光
-  const vig = ctx.createRadialGradient(cx, cy, S*0.30, cx, cy, S*0.5);
+  // 微光點點——散落的光粒，帶來如珠寶般的豐盛閃爍
+  ctx.globalCompositeOperation = 'lighter';
+  const sparks = [
+    [0.36,0.30,1.0],[0.50,0.23,0.7],[0.62,0.33,0.85],[0.30,0.48,0.6],
+    [0.68,0.58,0.7],[0.52,0.70,0.6],[0.44,0.42,0.5],[0.74,0.46,0.55],
+  ];
+  sparks.forEach(([sxr,syr,sc]) => {
+    const sxp = S*sxr, syp = S*syr, sr = S*0.055*sc;
+    const sg = ctx.createRadialGradient(sxp,syp,0,sxp,syp,sr);
+    sg.addColorStop(0.00, `rgba(255,250,236,${(0.85*sc).toFixed(3)})`);
+    sg.addColorStop(0.35, `rgba(255,238,206,${(0.22*sc).toFixed(3)})`);
+    sg.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = sg;
+    ctx.beginPath(); ctx.arc(sxp,syp,sr,0,Math.PI*2); ctx.fill();
+  });
+
+  ctx.globalCompositeOperation = 'source-over';
+
+  // 邊緣暗角——收邊，凸顯由內而外的透光
+  const vig = ctx.createRadialGradient(cx, cy, S*0.33, cx, cy, S*0.5);
   vig.addColorStop(0,   `rgba(${st.vig[0]},${st.vig[1]},${st.vig[2]},0)`);
-  vig.addColorStop(0.72,`rgba(${st.vig[0]},${st.vig[1]},${st.vig[2]},${(st.vig[3]*0.25).toFixed(3)})`);
-  vig.addColorStop(1,   `rgba(${st.vig[0]},${st.vig[1]},${st.vig[2]},${st.vig[3]})`);
+  vig.addColorStop(1,   `rgba(${st.vig[0]},${st.vig[1]},${st.vig[2]},${(st.vig[3]*0.7).toFixed(3)})`);
   ctx.fillStyle = vig;
   ctx.fillRect(0,0,S,S);
 
