@@ -786,19 +786,13 @@ function drawGoldText(ctx, text, cx, y, fontSize, spacing) {
 
   const top = y - fontSize*0.56, bot = y + fontSize*0.60;
 
-  // 對比襯底：字後較深的襯底，讓金字從明亮球面清楚浮出
+  // 對比襯底：字後一層柔和深色光暈，讓金字浮出但不留明顯邊框
   o.save();
-  o.fillStyle = 'rgba(56,36,12,0.6)';
-  o.shadowColor = 'rgba(46,28,10,0.6)';
-  o.shadowBlur = fontSize*0.06;
+  o.fillStyle = 'rgba(56,36,12,0.5)';
+  o.shadowColor = 'rgba(46,28,10,0.55)';
+  o.shadowBlur = fontSize*0.08;
   drawSpacedLine(o, text, cx, y, spacing);
   o.restore();
-
-  // 細暗描邊：四向微位移的深色，增加邊界對比（超取樣下仍平滑）
-  o.fillStyle = 'rgba(60,40,14,0.7)';
-  const ow = fontSize*0.012;
-  [[-ow,0],[ow,0],[0,-ow],[0,ow]]
-    .forEach(([dx,dy]) => drawSpacedLine(o, text, cx+dx, y+dy, spacing));
 
   // 反向漸層複本（下移一點）作為斜角，營造燙金的立體邊
   const gb = o.createLinearGradient(0, top, 0, bot);
