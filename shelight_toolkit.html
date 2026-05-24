@@ -758,63 +758,126 @@ function renderCard() {
   document.getElementById('card-preview-section').style.display = 'block';
 }
 
-function downloadCard() {
-  const card = document.getElementById('brand-card');
+// 含字距的置中單行繪製（手動實作，iOS Safari 也適用）
+function drawSpacedLine(ctx, text, cx, y, spacing) {
+  const chars = [...text];
+  const widths = chars.map(ch => ctx.measureText(ch).width);
+  let total = widths.reduce((a, w) => a + w + spacing, 0) - spacing;
+  let x = cx - total / 2;
+  const prevAlign = ctx.textAlign;
+  ctx.textAlign = 'left';
+  chars.forEach((ch, i) => {
+    ctx.fillText(ch, x, y);
+    x += widths[i] + spacing;
+  });
+  ctx.textAlign = prevAlign;
+}
+
+// 依寬度自動換行：中文逐字斷行，保留手動換行
+function wrapText(ctx, text, maxWidth) {
+  const out = [];
+  text.split('\n').forEach(para => {
+    if (!para) { out.push(''); return; }
+    let line = '';
+    for (const ch of para) {
+      if (ch === ' ' && line === '') continue;
+      const test = line + ch;
+      if (line && ctx.measureText(test).width > maxWidth) {
+        out.push(line);
+        line = ch === ' ' ? '' : ch;
+      } else {
+        line = test;
+      }
+    }
+    if (line) out.push(line);
+  });
+  return out;
+}
+
+async function downloadCard() {
+  const main = document.getElementById('card-main').value.trim();
+  const sub  = document.getElementById('card-sub').value.trim();
+  if (!main) { alert('請先生成卡片'); return; }
+
+  // 等品牌字型載入完成，避免輸出落到系統字型
+  try {
+    await Promise.all([
+      document.fonts.load('300 italic 80px "Cormorant Garamond"'),
+      document.fonts.load('300 80px "Noto Serif TC"'),
+      document.fonts.load('300 30px "Cormorant Garamond"'),
+    ]);
+    await document.fonts.ready;
+  } catch (e) {}
+
   const S = 1080;
   const out = document.createElement('canvas');
   out.width = S; out.height = S;
   const ctx = out.getContext('2d');
 
-  // 重繪大尺寸背景
-  const tmp = document.createElement('canvas');
-  tmp.width = S; tmp.height = S;
-  drawCardBg(tmp, cardStyle);
-  ctx.drawImage(tmp,0,0);
+  // 背景光暈（直接以 1080 重繪，非放大）
+  drawCardBg(out, cardStyle);
 
-  // 角點
-  const dotData = [{x:20,y:20,c:'#e8c090'},{x:S-20,y:20,c:'#f0b0c0'},{x:20,y:S-20,c:'#a8c8a8'},{x:S-20,y:S-20,c:'#e8c090'}];
-  dotData.forEach(d => {
-    ctx.fillStyle = d.c+'88';
-    ctx.beginPath(); ctx.arc(d.x,d.y,4,0,Math.PI*2); ctx.fill();
+  // 角點裝飾
+  const inset = 46, dotR = 6;
+  [
+    {x:inset,   y:inset,   c:'#e8c090'},
+    {x:S-inset, y:inset,   c:'#f0b0c0'},
+    {x:inset,   y:S-inset, c:'#a8c8a8'},
+    {x:S-inset, y:S-inset, c:'#e8c090'},
+  ].forEach(d => {
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = d.c;
+    ctx.beginPath(); ctx.arc(d.x, d.y, dotR, 0, Math.PI*2); ctx.fill();
   });
+  ctx.globalAlpha = 1;
 
-  // 品牌名
-  ctx.font = '300 28px Georgia, serif';
-  ctx.textAlign = 'center';
+  // 品牌名（頂部）
+  ctx.font = '300 30px "Cormorant Garamond", serif';
   ctx.fillStyle = '#c49870';
-  ctx.letterSpacing = '12px';
-  ctx.fillText('She Light', S/2+6, 52);
+  ctx.textBaseline = 'middle';
+  drawSpacedLine(ctx, 'SHE LIGHT', S/2, 82, 14);
 
-  // 主文字
-  const main = document.getElementById('card-main').value.trim();
-  const sub  = document.getElementById('card-sub').value.trim();
-  ctx.font = `300 italic ${main.length > 20 ? 62 : 72}px 'Georgia', serif`;
+  // 主文字——自適應字級 + 自動換行
+  const maxWidth = S - 240;   // 左右各留白 120
+  const maxTextH = 560;
+  let fontSize = 80, lines = [], lineH = 0;
+  while (fontSize >= 34) {
+    ctx.font = `300 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
+    lines = wrapText(ctx, main, maxWidth);
+    lineH = fontSize * 1.5;
+    if (lines.length * lineH <= maxTextH) break;
+    fontSize -= 4;
+  }
+
+  const subGap = sub ? 120 : 0;
+  const blockH = lines.length * lineH + subGap;
+  let y = (S - blockH) / 2 + lineH / 2;
+
   ctx.fillStyle = '#6b4838';
-  ctx.shadowColor = 'rgba(200,150,80,0.15)';
-  ctx.shadowBlur = 10;
-
-  const lines = main.split('\n');
-  const lineH = main.length > 20 ? 80 : 92;
-  const totalH = lines.length * lineH + (sub ? 60 : 0);
-  let startY = (S - totalH) / 2;
-  lines.forEach((line, i) => {
-    ctx.fillText(line, S/2, startY + i * lineH);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.shadowColor = 'rgba(200,150,80,0.18)';
+  ctx.shadowBlur = 14;
+  lines.forEach(line => {
+    ctx.fillText(line, S/2, y);
+    y += lineH;
   });
   ctx.shadowBlur = 0;
 
+  // 副標 + 分隔線
   if (sub) {
-    // 分隔線
-    ctx.strokeStyle = 'rgba(200,140,80,0.4)';
-    ctx.lineWidth = 0.8;
+    const dividerY = y + 4;
+    ctx.strokeStyle = 'rgba(200,140,80,0.45)';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(S/2-40, startY+lines.length*lineH+20);
-    ctx.lineTo(S/2+40, startY+lines.length*lineH+20);
+    ctx.moveTo(S/2 - 47, dividerY);
+    ctx.lineTo(S/2 + 47, dividerY);
     ctx.stroke();
-    // 副標
-    ctx.font = '300 26px Georgia, serif';
+
+    ctx.font = '300 30px "Noto Serif TC", serif';
     ctx.fillStyle = '#c49870';
-    ctx.letterSpacing = '6px';
-    ctx.fillText(sub, S/2+3, startY+lines.length*lineH+50);
+    ctx.textBaseline = 'middle';
+    drawSpacedLine(ctx, sub, S/2, dividerY + 46, 8);
   }
 
   const a = document.createElement('a');
