@@ -1377,13 +1377,23 @@ function drawAvatarCanvas(canvas, style, text) {
   ctx.fillStyle = cl;
   ctx.beginPath(); ctx.arc(lx*0.92, ly*0.84, S*0.072, 0, Math.PI*2); ctx.fill();
 
-  // 文字（燙金）
+  // 文字（燙金）——頭像在 IG 顯示很小，字要夠大才清楚
   if (text) {
-    const fontSize = text==='SL' ? S*0.26 : S*0.095;
-    const spacing  = text==='SL' ? S*0.02 : S*0.012;
-    ctx.font = `300 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
     ctx.textBaseline = 'middle';
-    drawGoldText(ctx, text, cx, cy, fontSize, spacing);
+    if (!text.includes(' ')) {
+      // 字標（如 SL）：放大置中
+      const fontSize = S*0.30, spacing = S*0.02;
+      ctx.font = `300 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
+      drawGoldText(ctx, text, cx, cy, fontSize, spacing);
+    } else {
+      // 完整字（如 She Light）：拆兩行放大，縮到大頭貼尺寸仍清楚
+      const words = text.split(' ');
+      const fontSize = S*0.165, spacing = S*0.006;
+      ctx.font = `300 italic ${fontSize}px "Cormorant Garamond", "Noto Serif TC", serif`;
+      const lh = fontSize*1.02;
+      const startY = cy - (words.length-1)*lh/2;
+      words.forEach((w,i) => drawGoldText(ctx, w, cx, startY + i*lh, fontSize, spacing));
+    }
   }
 
   ctx.restore();
