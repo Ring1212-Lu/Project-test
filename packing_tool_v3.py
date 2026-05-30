@@ -169,44 +169,47 @@ def _split_loading_codes(cd):
 
 def read_r_file(r_path, product_line=None):
     wb = openpyxl.load_workbook(r_path, data_only=True)
-    if product_line is None:
-        product_line = detect_product_line(wb)
+    try:
         if product_line is None:
-            wb.close()
-            raise ValueError("無法辨識 R 檔案的產品線，找不到對應的 Sheet")
-    cfg = PRODUCT_LINE_CONFIG[product_line]
-    ws1 = wb[cfg['sheet1']]
-    rev_cell = ws1[cfg['rev_cell']].value or ''
-    rev_num = int(''.join(c for c in str(rev_cell) if c.isdigit()) or '0')
-    date_cell = ws1[cfg['date_cell']].value or ''
-    cc_info = {}
-    for row in range(cfg['data_start'], ws1.max_row + 1):
-        cc = ws1.cell(row=row, column=19).value
-        if cc and str(cc).strip():
-            cc_key = str(cc).strip()
-            models = str(ws1.cell(row=row, column=2).value or '').strip()
-            pcs_std = ws1.cell(row=row, column=11).value
-            pcs_eu = ws1.cell(row=row + 1, column=11).value if row + 1 <= ws1.max_row else None
-            cc_info[cc_key] = {
-                'models': models, 'row': row,
-                'pcs_layer_std': pcs_std, 'pcs_layer_eu': pcs_eu,
-            }
-    ws2 = wb[cfg['sheet2']]
-    freight_info = {}
-    for row in range(13, ws2.max_row + 1):
-        model = ws2.cell(row=row, column=1).value
-        ptype = ws2.cell(row=row, column=2).value
-        gw = ws2.cell(row=row, column=3).value
-        if model and str(ptype).strip() == 'Standard':
-            freight_info[str(model).strip()] = {
-                'gw': gw, 'std_row': row, 'eu_row': row + 1,
-            }
-    wb.close()
-    return {
-        'rev': rev_num, 'date': date_cell, 'product_line': product_line,
-        'cc_info': cc_info, 'freight_info': freight_info,
-        'last_row_s1': ws1.max_row, 'last_row_s2': ws2.max_row,
-    }
+            product_line = detect_product_line(wb)
+            if product_line is None:
+                raise ValueError("無法辨識 R 檔案的產品線，找不到對應的 Sheet")
+        cfg = PRODUCT_LINE_CONFIG[product_line]
+        ws1 = wb[cfg['sheet1']]
+        rev_cell = ws1[cfg['rev_cell']].value or ''
+        rev_num = int(''.join(c for c in str(rev_cell) if c.isdigit()) or '0')
+        date_cell = ws1[cfg['date_cell']].value or ''
+        cc_info = {}
+        for row in range(cfg['data_start'], ws1.max_row + 1):
+            cc = ws1.cell(row=row, column=19).value
+            if cc and str(cc).strip():
+                cc_key = str(cc).strip()
+                models = str(ws1.cell(row=row, column=2).value or '').strip()
+                pcs_std = ws1.cell(row=row, column=11).value
+                pcs_eu = ws1.cell(row=row + 1, column=11).value if row + 1 <= ws1.max_row else None
+                box_h_mm = ws1.cell(row=row, column=22).value
+                cc_info[cc_key] = {
+                    'models': models, 'row': row,
+                    'pcs_layer_std': pcs_std, 'pcs_layer_eu': pcs_eu,
+                    'box_height_mm': box_h_mm,
+                }
+        ws2 = wb[cfg['sheet2']]
+        freight_info = {}
+        for row in range(13, ws2.max_row + 1):
+            model = ws2.cell(row=row, column=1).value
+            ptype = ws2.cell(row=row, column=2).value
+            gw = ws2.cell(row=row, column=3).value
+            if model and str(ptype).strip() == 'Standard':
+                freight_info[str(model).strip()] = {
+                    'gw': gw, 'std_row': row, 'eu_row': row + 1,
+                }
+        return {
+            'rev': rev_num, 'date': date_cell, 'product_line': product_line,
+            'cc_info': cc_info, 'freight_info': freight_info,
+            'last_row_s1': ws1.max_row, 'last_row_s2': ws2.max_row,
+        }
+    finally:
+        wb.close()
 
 
 # ======================== R 版本生成 ========================
@@ -221,51 +224,52 @@ def copy_cell_style(src, dst):
 
 def generate_r_version(r_path, tasks, output_dir=None, product_line=None):
     wb = openpyxl.load_workbook(r_path)
-    if product_line is None:
-        product_line = detect_product_line(wb)
+    try:
         if product_line is None:
-            wb.close()
-            raise ValueError("無法辨識 R 檔案的產品線")
-    cfg = PRODUCT_LINE_CONFIG[product_line]
-    s1_name = cfg['sheet1']
-    ws1 = wb[s1_name]
-    ws2 = wb[cfg['sheet2']]
-    rev_cell = str(ws1[cfg['rev_cell']].value or 'Rev:0')
-    old_rev = int(''.join(c for c in rev_cell if c.isdigit()) or '0')
-    new_rev = old_rev + 1
-    today = datetime.now().strftime('%Y/%-m/%-d') if sys.platform != 'win32' \
-        else datetime.now().strftime('%Y/%#m/%#d')
-    ws1[cfg['rev_cell']] = f'Rev:{new_rev}'
-    ws1[cfg['date_cell']] = f'Date:{today}'
-    ws2[cfg['s2_rev_cell']] = f'Rev:{new_rev}'
-    ws2[cfg['s2_date_cell']] = f'Date:{today}'
-    s1_next = ws1.max_row + 1
-    s2_next = ws2.max_row + 1
-    ref_row_s1 = None
-    for row in range(6, ws1.max_row + 1):
-        if ws1.cell(row=row, column=19).value:
-            ref_row_s1 = row
-    ref_row_s2 = None
-    for row in range(13, ws2.max_row + 1):
-        if ws2.cell(row=row, column=1).value and \
-           str(ws2.cell(row=row, column=2).value).strip() == 'Standard':
-            ref_row_s2 = row
-    for task in tasks:
-        if task['type'] == 'new':
-            _add_new_cc_sheet1(ws1, task, s1_next, ref_row_s1, product_line)
-            _add_new_cc_sheet2(ws2, task, s2_next, s1_next, ref_row_s2, s1_name)
-            s1_next += 12
-            s2_next += 2
-        elif task['type'] == 'existing':
-            _add_existing_cc(ws1, ws2, task, s2_next, ref_row_s2)
-            s2_next += 2
-    if output_dir is None:
-        output_dir = get_desktop()
-    out_name = f'{cfg["file_prefix"]}_Pallet_info_R{new_rev}_0_{datetime.now().strftime("%Y%m%d")}.xlsx'
-    out_path = Path(output_dir) / out_name
-    wb.save(str(out_path))
-    wb.close()
-    return str(out_path), new_rev
+            product_line = detect_product_line(wb)
+            if product_line is None:
+                raise ValueError("無法辨識 R 檔案的產品線")
+        cfg = PRODUCT_LINE_CONFIG[product_line]
+        s1_name = cfg['sheet1']
+        ws1 = wb[s1_name]
+        ws2 = wb[cfg['sheet2']]
+        rev_cell = str(ws1[cfg['rev_cell']].value or 'Rev:0')
+        old_rev = int(''.join(c for c in rev_cell if c.isdigit()) or '0')
+        new_rev = old_rev + 1
+        today = datetime.now().strftime('%Y/%-m/%-d') if sys.platform != 'win32' \
+            else datetime.now().strftime('%Y/%#m/%#d')
+        ws1[cfg['rev_cell']] = f'Rev:{new_rev}'
+        ws1[cfg['date_cell']] = f'Date:{today}'
+        ws2[cfg['s2_rev_cell']] = f'Rev:{new_rev}'
+        ws2[cfg['s2_date_cell']] = f'Date:{today}'
+        s1_next = ws1.max_row + 1
+        s2_next = ws2.max_row + 1
+        ref_row_s1 = None
+        for row in range(6, ws1.max_row + 1):
+            if ws1.cell(row=row, column=19).value:
+                ref_row_s1 = row
+        ref_row_s2 = None
+        for row in range(13, ws2.max_row + 1):
+            if ws2.cell(row=row, column=1).value and \
+               str(ws2.cell(row=row, column=2).value).strip() == 'Standard':
+                ref_row_s2 = row
+        for task in tasks:
+            if task['type'] == 'new':
+                _add_new_cc_sheet1(ws1, task, s1_next, ref_row_s1, product_line)
+                _add_new_cc_sheet2(ws2, task, s2_next, s1_next, ref_row_s2, s1_name)
+                s1_next += 12
+                s2_next += 2
+            elif task['type'] == 'existing':
+                _add_existing_cc(ws1, ws2, task, s2_next, ref_row_s2)
+                s2_next += 2
+        if output_dir is None:
+            output_dir = get_desktop()
+        out_name = f'{cfg["file_prefix"]}_Pallet_info_R{new_rev}_0_{datetime.now().strftime("%Y%m%d")}.xlsx'
+        out_path = Path(output_dir) / out_name
+        wb.save(str(out_path))
+        return str(out_path), new_rev
+    finally:
+        wb.close()
 
 
 def _add_new_cc_sheet1(ws, task, start_row, ref_row, product_line='AIO(PT)'):
@@ -440,7 +444,11 @@ def get_strikethrough_locations(excel_path):
 
 def collect_layer_rules(excel_path, product_line, box_height):
     strike_raw_set = get_strikethrough_locations(excel_path)
-    sheets = pd.read_excel(excel_path, sheet_name=None, header=None)
+    needed_sheets = ['海空運限高', '陸運', '歐規棧板', 'EPAL-Amazon', '日字-實木. EPAL#2']
+    try:
+        sheets = pd.read_excel(excel_path, sheet_name=needed_sheets, header=None)
+    except ValueError:
+        sheets = pd.read_excel(excel_path, sheet_name=None, header=None)
     bh = float(box_height) if box_height else None
     anomalies = []
 
@@ -757,7 +765,7 @@ def generate_csv(carton_code, box_height, bl1, bl2, loc_data,
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = f'{carton_code}_{ts}.csv'
     op = get_desktop() / filename
-    df.to_csv(op, index=False, encoding='big5', lineterminator='\r\n')
+    df.to_csv(op, index=False, encoding='big5', errors='replace', lineterminator='\r\n')
     return str(op), len(df)
 
 
@@ -858,9 +866,16 @@ class App:
             canvas.yview_scroll(-1, "units")
         def _on_linux_down(event):
             canvas.yview_scroll(1, "units")
-        canvas.bind_all("<MouseWheel>", _on_wheel)
-        canvas.bind_all("<Button-4>", _on_linux_up)
-        canvas.bind_all("<Button-5>", _on_linux_down)
+        def _bind(event):
+            canvas.bind_all("<MouseWheel>", _on_wheel)
+            canvas.bind_all("<Button-4>", _on_linux_up)
+            canvas.bind_all("<Button-5>", _on_linux_down)
+        def _unbind(event):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+        canvas.bind("<Enter>", _bind)
+        canvas.bind("<Leave>", _unbind)
 
     def _build(self):
         top = tk.Frame(self.root, bg=C['white'], padx=12, pady=8)
@@ -1100,10 +1115,12 @@ class App:
             }
         else:
             existing = self.r_info['cc_info'][cc]
+            box_h_mm = existing.get('box_height_mm')
+            box_h_cm = box_h_mm / 10.0 if box_h_mm else 50.0
             task = {
                 'type': 'existing', 'cc': cc, 'models': models,
                 'existing_models': existing['models'],
-                'box_height_cm': 50.0,
+                'box_height_cm': box_h_cm,
             }
         self.task_list.append(task)
         self._refresh_list()
@@ -1227,17 +1244,22 @@ class App:
                             fg=C['green'])
                     except Exception:
                         pass
+                    self._running = False
+                    self.gen_btn.config(
+                        state='normal' if self.task_list else 'disabled',
+                        bg=C['btn_blue'] if self.task_list else C['border'])
 
                 self.root.after(0, _post_generate)
             except Exception as e:
                 tb = traceback.format_exc()
-                self.root.after(0, lambda: messagebox.showerror("Failed", f"{e}\n\n{tb}"))
-                self.root.after(0, lambda: self.status_var.set("Failed"))
-            finally:
-                self._running = False
-                self.root.after(0, lambda: self.gen_btn.config(
-                    state='normal' if self.task_list else 'disabled',
-                    bg=C['btn_blue'] if self.task_list else C['border']))
+                def _on_error():
+                    messagebox.showerror("Failed", f"{e}\n\n{tb}")
+                    self.status_var.set("Failed")
+                    self._running = False
+                    self.gen_btn.config(
+                        state='normal' if self.task_list else 'disabled',
+                        bg=C['btn_blue'] if self.task_list else C['border'])
+                self.root.after(0, _on_error)
 
         threading.Thread(target=work, daemon=True).start()
 
