@@ -803,7 +803,7 @@ class PreviewDialog:
         # ── 標題 ──
         top = tk.Frame(self.win, bg=C['white'], padx=12, pady=8)
         top.pack(fill='x')
-        tk.Label(top, text=f"  {self.cc} — 特殊棧板 CSV 預覽",
+        tk.Label(top, text=f"📊  {self.cc} — 特殊棧板 CSV 預覽",
                  font=('Microsoft JhengHei UI', 13, 'bold'),
                  bg=C['white'], fg=C['text']).pack(side='left')
         tk.Label(top, text=f"箱高: {self.box_height}cm  BL EU: {self.bl_eu}  BL L7-G: {self.bl_l7g}",
@@ -817,7 +817,7 @@ class PreviewDialog:
 
         # ── 異常區 ──
         if self.anomalies:
-            af = tk.LabelFrame(main, text=f"  異常偵測 ({len(self.anomalies)} 筆)  ",
+            af = tk.LabelFrame(main, text=f"  ⚠️  異常偵測 ({len(self.anomalies)} 筆)  ",
                                font=('Microsoft JhengHei UI', 9, 'bold'),
                                bg=C['white'], fg=C['orange'], padx=6, pady=4)
             af.pack(fill='x', pady=(0, 6))
@@ -863,7 +863,7 @@ class PreviewDialog:
                          bg=row_bg, fg=fg, anchor='w').pack(side='left', fill='x', expand=True)
 
         # ── 層數預覽表 ──
-        lf = tk.LabelFrame(main, text=f"  層數預覽 ({len(self.rules)} 條規則)  — 雙擊層數欄可編輯  ",
+        lf = tk.LabelFrame(main, text=f"  📊  層數預覽 ({len(self.rules)} 條規則)  — 雙擊層數欄可編輯  ",
                            font=('Microsoft JhengHei UI', 9, 'bold'),
                            bg=C['white'], fg=C['blue'], padx=6, pady=4)
         lf.pack(fill='both', expand=True)
@@ -905,7 +905,7 @@ class PreviewDialog:
         # ── 按鈕列 ──
         bf = tk.Frame(self.win, bg=C['bg'], pady=8)
         bf.pack(fill='x')
-        tk.Button(bf, text="確認 — 加入待處理清單",
+        tk.Button(bf, text="✅  確認 — 加入待處理清單",
                   font=('Microsoft JhengHei UI', 11, 'bold'),
                   bg=C['btn_green'], fg=C['btn_fg'],
                   activebackground=C['btn_green_h'],
@@ -921,7 +921,7 @@ class PreviewDialog:
         """彈出 unknown/parse_error 警告"""
         warnings = [a for a in self.anomalies if a['type'] in ('unknown', 'parse_error')]
         if warnings:
-            msg = "發現需要注意的異常：\n\n"
+            msg = "⚠️ 發現需要注意的異常：\n\n"
             for w in warnings[:10]:
                 msg += f"  [{w['sheet']}] {w['location']}\n    {w['reason']}\n\n"
             if len(warnings) > 10:
@@ -1065,7 +1065,7 @@ class App:
     def _group_label(self, parent, text):
         gf = tk.Frame(parent, bg=C['surface2'])
         gf.pack(fill='x')
-        tk.Label(gf, text=f"  -- {text} --", font=('Microsoft JhengHei UI', 8),
+        tk.Label(gf, text=f"  ── {text} ──", font=('Microsoft JhengHei UI', 8),
                  bg=C['surface2'], fg=C['text_muted'], anchor='w',
                  pady=3, padx=4).pack(fill='x')
         tk.Frame(parent, bg=C['border'], height=1).pack(fill='x')
@@ -1119,7 +1119,7 @@ class App:
         icon_frame = tk.Frame(top, bg=C['blue'], width=38, height=38)
         icon_frame.pack(side='left', padx=(0, 10))
         icon_frame.pack_propagate(False)
-        tk.Label(icon_frame, text="P", font=('Microsoft JhengHei UI', 16),
+        tk.Label(icon_frame, text="📦", font=('Microsoft JhengHei UI', 16),
                  bg=C['blue'], fg=C['btn_fg']).pack(expand=True)
         tf = tk.Frame(top, bg=C['white'])
         tf.pack(side='left')
@@ -1130,8 +1130,8 @@ class App:
                  font=('Microsoft JhengHei UI', 8), bg=C['white'], fg=C['text_muted']).pack(anchor='w')
         flow = tk.Frame(top, bg=C['white'])
         flow.pack(side='right')
-        for txt, ck in [("Pallet info", 'blue'), ("→", ""), ("新增CC", 'green'),
-                        ("→", ""), ("預覽", 'orange'), ("→", ""), ("產出", 'green')]:
+        for txt, ck in [("📄Pallet info", 'blue'), ("→", ""), ("➕新增CC", 'green'),
+                        ("→", ""), ("🔍預覽", 'orange'), ("→", ""), ("📊產出", 'green')]:
             if txt == "→":
                 tk.Label(flow, text="→", font=('Microsoft JhengHei UI', 8),
                          bg=C['white'], fg=C['text_muted']).pack(side='left', padx=2)
@@ -1157,7 +1157,7 @@ class App:
         vsb.pack(side='right', fill='y')
 
         # ── Step 0: Pallet info 檔案選擇（PT + PF）──
-        fc = self._section(self.main, "Step 0：選擇 Pallet info 檔案", 'blue')
+        fc = self._section(self.main, "📁  Step 0：選擇 Pallet info 檔案", 'blue')
 
         # PT Pallet info
         pt_row = tk.Frame(fc, bg=C['white'])
@@ -1170,7 +1170,7 @@ class App:
                  relief='solid', bd=1, highlightthickness=1,
                  highlightcolor=C['input_focus'],
                  highlightbackground=C['input_bd']).pack(side='left', padx=6)
-        tk.Button(pt_row, text="瀏覽", font=('Microsoft JhengHei UI', 9),
+        tk.Button(pt_row, text="📂 瀏覽", font=('Microsoft JhengHei UI', 9),
                   bg=C['btn_blue'], fg=C['btn_fg'], activebackground=C['btn_hover'],
                   relief='flat', padx=10, pady=2, cursor='hand2',
                   command=lambda: self._browse_r('AIO(PT)')).pack(side='left')
@@ -1191,7 +1191,7 @@ class App:
                  relief='solid', bd=1, highlightthickness=1,
                  highlightcolor=C['input_focus'],
                  highlightbackground=C['input_bd']).pack(side='left', padx=6)
-        tk.Button(pf_row, text="瀏覽", font=('Microsoft JhengHei UI', 9),
+        tk.Button(pf_row, text="📂 瀏覽", font=('Microsoft JhengHei UI', 9),
                   bg=C['btn_blue'], fg=C['btn_fg'], activebackground=C['btn_hover'],
                   relief='flat', padx=10, pady=2, cursor='hand2',
                   command=lambda: self._browse_r('PF')).pack(side='left')
@@ -1200,7 +1200,7 @@ class App:
         self.r_info_pf_label.pack(anchor='w')
 
         # ── Step 1: 新增 CC ──
-        ic = self._section(self.main, "Step 1：新增 Carton Code", 'green')
+        ic = self._section(self.main, "➕  Step 1：新增 Carton Code", 'green')
         self._group_label(ic, "產品 / 機種")
         self.cc_var = self._field_row(ic, "Carton Code", '', idx=0)
         self.models_var = self._field_row(ic, "Models 機種名稱", '', idx=1)
@@ -1209,7 +1209,7 @@ class App:
         chk_frame = tk.Frame(ic, bg=C['white'])
         chk_frame.pack(fill='x', pady=(4, 2))
         self.check_btn = tk.Button(
-            chk_frame, text="檢查 CC 新舊",
+            chk_frame, text="🔍  檢查 CC 新舊",
             font=('Microsoft JhengHei UI', 9, 'bold'), bg=C['btn_orange'], fg=C['btn_fg'],
             activebackground=C['btn_orange_h'], relief='flat', padx=14, pady=4,
             cursor='hand2', command=self._check_cc)
@@ -1245,7 +1245,7 @@ class App:
                  relief='solid', bd=1, highlightthickness=1,
                  highlightcolor=C['input_focus'],
                  highlightbackground=C['input_bd']).pack(side='left', padx=6)
-        tk.Button(arow, text="瀏覽", font=('Microsoft JhengHei UI', 9),
+        tk.Button(arow, text="📂 瀏覽", font=('Microsoft JhengHei UI', 9),
                   bg=C['btn_blue'], fg=C['btn_fg'],
                   activebackground=C['btn_hover'],
                   relief='flat', padx=10, pady=2, cursor='hand2',
@@ -1257,14 +1257,14 @@ class App:
         bf = tk.Frame(ic, bg=C['white'])
         bf.pack(fill='x', pady=(8, 4))
         self.add_btn = tk.Button(
-            bf, text="＋ 加入待處理清單",
+            bf, text="✚  加入待處理清單",
             font=('Microsoft JhengHei UI', 10, 'bold'), bg=C['btn_green'], fg=C['btn_fg'],
             activebackground=C['btn_green_h'], relief='flat', padx=20, pady=6,
             cursor='hand2', command=self._add_to_list)
         self.add_btn.pack()
 
         # ── 待處理清單 ──
-        self.list_section = self._section(self.main, "待處理清單", 'orange')
+        self.list_section = self._section(self.main, "📋  待處理清單", 'orange')
         self.list_frame = tk.Frame(self.list_section, bg=C['white'])
         self.list_frame.pack(fill='x')
         self.list_empty_label = tk.Label(self.list_frame,
@@ -1280,14 +1280,14 @@ class App:
         bf2 = tk.Frame(self.main, bg=C['bg'])
         bf2.pack(pady=(6, 4))
         self.gen_btn = tk.Button(
-            bf2, text="確認產出",
+            bf2, text="🚀  確認產出",
             font=('Microsoft JhengHei UI', 12, 'bold'), bg=C['btn_blue'], fg=C['btn_fg'],
             activebackground=C['btn_hover'], relief='flat', padx=28, pady=10,
             cursor='hand2', command=self._generate_all, state='disabled')
         self.gen_btn.pack()
 
         # ── 固定參數 ──
-        rc = self._section(self.main, "固定參數 Reference", 'orange')
+        rc = self._section(self.main, "📋  固定參數 Reference", 'orange')
         self._ref_row(rc, [('運輸類型', '空運:1  海運:2  陸運:4  散貨:6')], 0)
         self._ref_row(rc, [('棧板高(cm)',
                             'EU/L7-G:14.1  EPAL-EU:16.5  EPAL-STD:18.5')], 1)
@@ -1335,13 +1335,13 @@ class App:
             rev = r_info['rev']
             cc_count = len(r_info['cc_info'])
             info_label.config(
-                text=f"  已載入：Rev {rev}，{cc_count} 個 CC",
+                text=f"  ✅ Rev: {rev}，{cc_count} 個 CC",
                 fg=C['green'])
             self.status_var.set(f"已載入 {product_line} R{rev}")
         except Exception as e:
             self.r_info.pop(product_line, None)
             self.r_path.pop(product_line, None)
-            info_label.config(text=f"  載入失敗: {e}", fg=C['red'])
+            info_label.config(text=f"  ❌ 載入失敗: {e}", fg=C['red'])
 
     def _browse_a(self):
         fp = filedialog.askopenfilename(
@@ -1387,14 +1387,17 @@ class App:
         if is_new:
             self.new_cc_frame.pack(fill='x', before=self.add_btn.master)
             self.a_product_var.set(pl)
-            self.cc_status_var.set(f"新 CC（{pl}）— 請填寫下方欄位")
+            self.cc_status_var.set(
+                f"🆕 {cc} 是新的 Carton Code（{pl}）\n"
+                f"     → 請填寫下方欄位")
             self.cc_status_label.config(fg=C['orange'])
             self.status_var.set(f"{cc} 是新 CC（{pl}），請填寫箱子規格")
         else:
             self.new_cc_frame.pack_forget()
             existing = r_info['cc_info'][cc]
             self.cc_status_var.set(
-                f"舊 CC（{pl}）— 現有機種: {existing['models']}")
+                f"📎 {cc} 已存在（{pl}）— 現有機種: {existing['models']}\n"
+                f"     → 追加新機種（不產 CSV）")
             self.cc_status_label.config(fg=C['blue'])
             self.status_var.set(f"{cc} 是舊 CC（{pl}），只需輸入 Models")
 
@@ -1565,7 +1568,7 @@ class App:
                      bg=bg, fg=C['text_dim'], width=6, anchor='w').pack(side='left')
             type_bg = C['orange_light'] if is_new else C['blue_light']
             type_fg = C['orange'] if is_new else C['blue']
-            type_text = "新" if is_new else "舊"
+            type_text = "🆕 新" if is_new else "📎 舊"
             tframe = tk.Frame(row, bg=type_bg, padx=4, pady=1)
             tframe.pack(side='left', padx=4)
             tk.Label(tframe, text=type_text, font=('Microsoft JhengHei UI', 8, 'bold'),
@@ -1577,7 +1580,7 @@ class App:
                      bg=bg, fg=C['text'], width=22, anchor='w').pack(side='left')
             def make_del(i):
                 return lambda: self._remove_task(i)
-            tk.Button(row, text="X", font=('Microsoft JhengHei UI', 8),
+            tk.Button(row, text="✕", font=('Microsoft JhengHei UI', 8),
                       bg=bg, fg=C['red'], relief='flat', cursor='hand2',
                       command=make_del(idx), padx=4).pack(side='left')
 
@@ -1588,7 +1591,7 @@ class App:
             parts.append(f"{new_count} 個新 CC")
         if old_count:
             parts.append(f"{old_count} 個舊 CC")
-        btn_text = f"確認產出（{' + '.join(parts)}）"
+        btn_text = f"🚀  確認產出 — {' + '.join(parts)}"
         self.gen_btn.config(state='normal', bg=C['btn_blue'], text=btn_text)
 
     def _remove_task(self, idx):
@@ -1624,16 +1627,16 @@ class App:
                 for pl, pl_tasks in tasks_by_pl.items():
                     r_path = r_path_snapshot.get(pl)
                     if not r_path:
-                        results.append(f"{pl} — Pallet info 未載入，跳過")
+                        results.append(f"⚠️ {pl} — Pallet info 未載入，跳過")
                         continue
                     try:
                         out_r, new_rev = generate_r_version(
                             r_path, pl_tasks, product_line=pl)
                         pl_short = 'PT' if pl == 'AIO(PT)' else 'PF'
-                        results.append(f"{pl_short} R{new_rev} → {os.path.basename(out_r)}")
+                        results.append(f"✅ {pl_short} R{new_rev} → {os.path.basename(out_r)}")
                         new_r_paths[pl] = (out_r, new_rev)
                     except Exception as e:
-                        results.append(f"{pl} Pallet info 更新失敗: {e}")
+                        results.append(f"❌ {pl} Pallet info 更新失敗: {e}")
 
                 # 新 CC 產出特殊棧板 CSV
                 for task in tasks_snapshot:
@@ -1648,24 +1651,24 @@ class App:
                     loc_data = task.get('preview_loc_data')
 
                     if not loc_data:
-                        results.append(f"{cc} — 缺少預覽資料，跳過 CSV")
+                        results.append(f"⚠️ {cc} — 缺少預覽資料，跳過 CSV")
                         continue
 
                     try:
                         csv_path, csv_cnt = generate_csv(
                             cc, bh, bl1, bl2, loc_data, layer_lookup, excluded_locs)
                         results.append(
-                            f"{cc} CSV → {os.path.basename(csv_path)}（{csv_cnt} 筆）")
+                            f"✅ {cc} CSV → {os.path.basename(csv_path)}（{csv_cnt} 筆）")
                     except Exception as e:
-                        results.append(f"{cc} CSV 失敗: {e}")
+                        results.append(f"❌ {cc} CSV 失敗: {e}")
 
                 msg = "產出完成！\n\n" + "\n".join(results) + "\n\n檔案已儲存到桌面"
-                self.root.after(0, lambda: messagebox.showinfo("產出完成", msg))
+                self.root.after(0, lambda: messagebox.showinfo("✅ 產出完成", msg))
 
                 new_cc_count = sum(1 for t in tasks_snapshot if t['type'] == 'new')
                 old_cc_count = sum(1 for t in tasks_snapshot if t['type'] == 'existing')
                 self.root.after(0, lambda: self.status_var.set(
-                    f"完成 — {new_cc_count} 個新 CC + {old_cc_count} 個舊 CC"))
+                    f"✅ 完成 — {new_cc_count} 個新 CC + {old_cc_count} 個舊 CC"))
 
                 def _post_generate():
                     self.task_list.clear()
@@ -1681,7 +1684,7 @@ class App:
                             cc_count = len(self.r_info[pl]['cc_info'])
                             label = self.r_info_pt_label if pl == 'AIO(PT)' else self.r_info_pf_label
                             label.config(
-                                text=f"  已載入：Rev {new_rev}，{cc_count} 個 CC",
+                                text=f"  ✅ Rev: {new_rev}，{cc_count} 個 CC",
                                 fg=C['green'])
                         except Exception:
                             pass
@@ -1696,7 +1699,7 @@ class App:
                 tb = traceback.format_exc()
                 def _on_error():
                     messagebox.showerror("產出失敗", f"{e}\n\n{tb}")
-                    self.status_var.set("產出失敗")
+                    self.status_var.set("❌ 產出失敗")
                     self._running = False
                     self.gen_btn.config(
                         state='normal' if self.task_list else 'disabled',
