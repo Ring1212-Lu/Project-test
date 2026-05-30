@@ -342,12 +342,12 @@ def _add_new_cc_sheet2(ws, task, start_row, s1_start, ref_row, s1_name):
             150: s1_start + 10 + i,
         }
         sea_formula = (
-            f'=IF($G$7="Sea 220cm",\'{s1_name}\'!M${sea_rows[220]},'
-            f'IF($G$7="Sea 210cm",\'{s1_name}\'!M${sea_rows[210]},'
-            f'IF($G$7="Sea 200cm",\'{s1_name}\'!M${sea_rows[200]},'
-            f'IF($G$7="Sea 180cm",\'{s1_name}\'!M${sea_rows[180]},'
-            f'IF($G$7="Sea 150cm",\'{s1_name}\'!M${sea_rows[150]},'
-            f'"N/A")))))'
+            f"=IF($G$7=\"Sea 220cm\",'{s1_name}'!M${sea_rows[220]},"
+            f"IF($G$7=\"Sea 210cm\",'{s1_name}'!M${sea_rows[210]},"
+            f"IF($G$7=\"Sea 200cm\",'{s1_name}'!M${sea_rows[200]},"
+            f"IF($G$7=\"Sea 180cm\",'{s1_name}'!M${sea_rows[180]},"
+            f"IF($G$7=\"Sea 150cm\",'{s1_name}'!M${sea_rows[150]},"
+            f"\"N/A\")))))"
         )
         ws.cell(row=r, column=7, value=sea_formula)
         ws.cell(row=r, column=8, value=f"='{s1_name}'!I${s1_row}")
@@ -423,21 +423,23 @@ def _add_existing_cc(ws1, ws2, task, s2_next, ref_row_s2):
 
 def get_strikethrough_locations(excel_path):
     wb = openpyxl.load_workbook(excel_path, data_only=False, read_only=True)
-    strike_set = set()
-    for sname in ['歐規棧板', '海空運限高', '陸運', 'EPAL-Amazon', '日字-實木. EPAL#2']:
-        if sname not in wb.sheetnames:
-            continue
-        ws = wb[sname]
-        for row in ws.iter_rows(min_row=3, max_col=2):
-            if len(row) < 2:
+    try:
+        strike_set = set()
+        for sname in ['歐規棧板', '海空運限高', '陸運', 'EPAL-Amazon', '日字-實木. EPAL#2']:
+            if sname not in wb.sheetnames:
                 continue
-            cell = row[1]
-            if cell.value and cell.font and cell.font.strikethrough:
-                raw = clean_str(cell.value)
-                if raw:
-                    strike_set.add(raw)
-    wb.close()
-    return strike_set
+            ws = wb[sname]
+            for row in ws.iter_rows(min_row=3, max_col=2):
+                if len(row) < 2:
+                    continue
+                cell = row[1]
+                if cell.value and cell.font and cell.font.strikethrough:
+                    raw = clean_str(cell.value)
+                    if raw:
+                        strike_set.add(raw)
+        return strike_set
+    finally:
+        wb.close()
 
 
 # ======================== CSV 生成核心 ========================
@@ -769,6 +771,237 @@ def generate_csv(carton_code, box_height, bl1, bl2, loc_data,
     return str(op), len(df)
 
 
+# ======================== 預覽對話框 (v2.0 完整流程) ========================
+
+class PreviewDialog:
+    """新 CC 的特殊棧板 CSV 預覽對話框，複製 v2.0 的完整流程"""
+
+    def __init__(self, parent, cc, rules, loc_data, anomalies, box_height, bl_eu, bl_l7g):
+        self.result = None  # 成功時回傳 {layer_lookup, excluded_locs}
+        self.rules = rules
+        self.loc_data = loc_data
+        self.anomalies = anomalies
+        self.cc = cc
+        self.box_height = box_height
+        self.bl_eu = bl_eu
+        self.bl_l7g = bl_l7g
+
+        self.anomaly_vars = []
+
+        self.win = tk.Toplevel(parent)
+        self.win.title(f"特殊棧板 CSV 預覽 — {cc}")
+        self.win.geometry("880x700")
+        self.win.minsize(880, 500)
+        self.win.configure(bg=C['bg'])
+        self.win.transient(parent)
+        self.win.grab_set()
+
+        self._build()
+        self._show_warnings()
+
+    def _build(self):
+        # ── 標題 ──
+        top = tk.Frame(self.win, bg=C['white'], padx=12, pady=8)
+        top.pack(fill='x')
+        tk.Label(top, text=f"  {self.cc} — 特殊棧板 CSV 預覽",
+                 font=('Microsoft JhengHei UI', 13, 'bold'),
+                 bg=C['white'], fg=C['text']).pack(side='left')
+        tk.Label(top, text=f"箱高: {self.box_height}cm  BL EU: {self.bl_eu}  BL L7-G: {self.bl_l7g}",
+                 font=('Microsoft JhengHei UI', 9),
+                 bg=C['white'], fg=C['text_muted']).pack(side='right')
+        tk.Frame(self.win, bg=C['border'], height=1).pack(fill='x')
+
+        # ── 主容器 ──
+        main = tk.Frame(self.win, bg=C['bg'])
+        main.pack(fill='both', expand=True, padx=10, pady=6)
+
+        # ── 異常區 ──
+        if self.anomalies:
+            af = tk.LabelFrame(main, text=f"  異常偵測 ({len(self.anomalies)} 筆)  ",
+                               font=('Microsoft JhengHei UI', 9, 'bold'),
+                               bg=C['white'], fg=C['orange'], padx=6, pady=4)
+            af.pack(fill='x', pady=(0, 6))
+
+            # 捲動區
+            ac = tk.Canvas(af, bg=C['white'], height=min(120, len(self.anomalies) * 22),
+                           highlightthickness=0)
+            asb = ttk.Scrollbar(af, orient='vertical', command=ac.yview)
+            aframe = tk.Frame(ac, bg=C['white'])
+            aframe.bind('<Configure>', lambda e: ac.configure(scrollregion=ac.bbox('all')))
+            ac.create_window((0, 0), window=aframe, anchor='nw')
+            ac.configure(yscrollcommand=asb.set)
+            ac.pack(side='left', fill='both', expand=True)
+            asb.pack(side='right', fill='y')
+
+            self.anomaly_vars = []
+            for i, a in enumerate(self.anomalies):
+                atype = a['type']
+                # 顏色設定
+                if atype in ('strikethrough', 'ignored'):
+                    fg, default_checked = C['orange'], True
+                elif atype == 'renamed':
+                    fg, default_checked = C['blue'], False
+                else:  # unknown, parse_error
+                    fg, default_checked = C['red'], False
+
+                var = tk.BooleanVar(value=default_checked)
+                self.anomaly_vars.append(var)
+
+                row_bg = C['white'] if i % 2 == 0 else C['surface2']
+                rf = tk.Frame(aframe, bg=row_bg)
+                rf.pack(fill='x')
+                tk.Checkbutton(rf, variable=var, bg=row_bg,
+                               activebackground=row_bg).pack(side='left')
+                tk.Label(rf, text=f"[{a['sheet']}]", font=('Consolas', 8),
+                         bg=row_bg, fg=C['text_muted'], width=10, anchor='w').pack(side='left')
+                tk.Label(rf, text=a['location'], font=('Consolas', 9, 'bold'),
+                         bg=row_bg, fg=fg, width=18, anchor='w').pack(side='left')
+                reason_text = a['reason']
+                if a.get('pallet_type'):
+                    reason_text = f"{a['pallet_type']} | {reason_text}"
+                tk.Label(rf, text=reason_text, font=('Microsoft JhengHei UI', 8),
+                         bg=row_bg, fg=fg, anchor='w').pack(side='left', fill='x', expand=True)
+
+        # ── 層數預覽表 ──
+        lf = tk.LabelFrame(main, text=f"  層數預覽 ({len(self.rules)} 條規則)  — 雙擊層數欄可編輯  ",
+                           font=('Microsoft JhengHei UI', 9, 'bold'),
+                           bg=C['white'], fg=C['blue'], padx=6, pady=4)
+        lf.pack(fill='both', expand=True)
+
+        cols = ('pallet', 'loading', 'limitation', 'layer', 'default', 'source')
+        self.tree = ttk.Treeview(lf, columns=cols, show='headings', height=15)
+        for c, w, t in [
+            ('pallet', 90, '棧板類型'), ('loading', 80, '運輸方式'),
+            ('limitation', 80, '限高(cm)'), ('layer', 65, '層數'),
+            ('default', 55, '預設'), ('source', 140, '來源'),
+        ]:
+            self.tree.heading(c, text=t)
+            self.tree.column(c, width=w, anchor='center' if c in ('layer', 'default') else 'w')
+
+        tsb = ttk.Scrollbar(lf, orient='vertical', command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tsb.set)
+        self.tree.pack(side='left', fill='both', expand=True)
+        tsb.pack(side='right', fill='y')
+
+        # 填充資料
+        self.layer_edits = {}  # (pallet, lt, lim) -> edited_layer
+        for r in self.rules:
+            iid = self.tree.insert('', 'end', values=(
+                r['pallet_code'], r['loading_name'],
+                r['limitation'], r['calc_layer'],
+                'Y' if r['is_default'] else '',
+                r['source'],
+            ))
+            key = (r['pallet_code'], r['loading_type'], r['limitation'])
+            self.layer_edits[key] = r['calc_layer']
+
+            # 預設限高行用橘色標記
+            if r['is_default']:
+                self.tree.item(iid, tags=('default',))
+
+        self.tree.tag_configure('default', background=C['special_bg'], foreground=C['orange'])
+        self.tree.bind('<Double-1>', self._edit_layer)
+
+        # ── 按鈕列 ──
+        bf = tk.Frame(self.win, bg=C['bg'], pady=8)
+        bf.pack(fill='x')
+        tk.Button(bf, text="確認 — 加入待處理清單",
+                  font=('Microsoft JhengHei UI', 11, 'bold'),
+                  bg=C['btn_green'], fg=C['btn_fg'],
+                  activebackground=C['btn_green_h'],
+                  relief='flat', padx=24, pady=8, cursor='hand2',
+                  command=self._confirm).pack(side='right', padx=14)
+        tk.Button(bf, text="取消",
+                  font=('Microsoft JhengHei UI', 10),
+                  bg=C['border'], fg=C['text_dim'],
+                  relief='flat', padx=16, pady=6, cursor='hand2',
+                  command=self.win.destroy).pack(side='right')
+
+    def _show_warnings(self):
+        """彈出 unknown/parse_error 警告"""
+        warnings = [a for a in self.anomalies if a['type'] in ('unknown', 'parse_error')]
+        if warnings:
+            msg = "發現需要注意的異常：\n\n"
+            for w in warnings[:10]:
+                msg += f"  [{w['sheet']}] {w['location']}\n    {w['reason']}\n\n"
+            if len(warnings) > 10:
+                msg += f"  ... 還有 {len(warnings) - 10} 筆\n"
+            messagebox.showwarning("異常警告", msg, parent=self.win)
+
+    def _edit_layer(self, event):
+        """雙擊編輯層數"""
+        item = self.tree.identify_row(event.y)
+        col = self.tree.identify_column(event.x)
+        if not item or col != '#4':
+            return
+
+        vals = self.tree.item(item, 'values')
+        bbox = self.tree.bbox(item, 'layer')
+        if not bbox:
+            return
+        x, y, w, h = bbox
+        entry = tk.Entry(self.tree, font=('Consolas', 10), justify='center', width=5)
+        entry.place(x=x, y=y, width=w, height=h)
+        entry.insert(0, vals[3])
+        entry.select_range(0, 'end')
+        entry.focus_set()
+
+        saved = [False]
+
+        def save(e=None):
+            if saved[0]:
+                return
+            saved[0] = True
+            try:
+                new_val = int(entry.get())
+                if new_val < 1:
+                    new_val = 1
+            except (ValueError, tk.TclError):
+                entry.destroy()
+                return
+            new_vals = list(vals)
+            new_vals[3] = str(new_val)
+            self.tree.item(item, values=new_vals)
+            pc, lt_name, lim = vals[0], vals[1], float(vals[2])
+            lt_map = {v: k for k, v in LOADING_NAME.items()}
+            lt = lt_map.get(lt_name, 0)
+            key = (pc, lt, lim)
+            self.layer_edits[key] = new_val
+            tags = list(self.tree.item(item, 'tags'))
+            if 'edited' not in tags:
+                tags.append('edited')
+            self.tree.item(item, tags=tags)
+            self.tree.tag_configure('edited', background=C['edited'])
+            entry.destroy()
+
+        def cancel(e=None):
+            if not saved[0]:
+                saved[0] = True
+                entry.destroy()
+
+        entry.bind('<Return>', save)
+        entry.bind('<FocusOut>', save)
+        entry.bind('<Escape>', cancel)
+
+    def _confirm(self):
+        """確認並回傳結果"""
+        # 收集排除的 locations
+        excluded = set()
+        for i, a in enumerate(self.anomalies):
+            if self.anomaly_vars[i].get():
+                loc = resolve_location(a['location'])
+                if loc and a['type'] not in ('strikethrough', 'ignored'):
+                    excluded.add(loc)
+
+        self.result = {
+            'layer_lookup': dict(self.layer_edits),
+            'excluded_locs': excluded,
+            'rule_count': len(self.rules),
+            'anomaly_count': len(self.anomalies),
+        }
+        self.win.destroy()
+
+
 # ======================== GUI v3.0 批次模式 ========================
 
 class App:
@@ -779,10 +1012,12 @@ class App:
         self.root.minsize(960, 700)
         self.root.resizable(True, True)
         self.root.configure(bg=C['bg'])
-        self.r_info = None
-        self.r_path = None
+        self.r_info = {}         # {'AIO(PT)': r_info, 'PF': r_info}
+        self.r_path = {}         # {'AIO(PT)': path, 'PF': path}
         self.task_list = []
         self._running = False
+        self._cc_is_new = None
+        self._cc_product_line = None  # 自動偵測的產品線
         self._build()
 
     def _section(self, parent, title, ck='blue'):
@@ -878,6 +1113,7 @@ class App:
         canvas.bind("<Leave>", _unbind)
 
     def _build(self):
+        # 標題列
         top = tk.Frame(self.root, bg=C['white'], padx=12, pady=8)
         top.pack(fill='x')
         icon_frame = tk.Frame(top, bg=C['blue'], width=38, height=38)
@@ -887,22 +1123,23 @@ class App:
                  bg=C['blue'], fg=C['btn_fg']).pack(expand=True)
         tf = tk.Frame(top, bg=C['white'])
         tf.pack(side='left')
-        tk.Label(tf, text="Pallet Packing Configuration Tool",
+        tk.Label(tf, text="棧板包裝資料處理工具",
                  font=('Microsoft JhengHei UI', 14, 'bold'),
                  bg=C['white'], fg=C['text']).pack(anchor='w')
-        tk.Label(tf, text="v3.0 batch mode",
+        tk.Label(tf, text="Pallet Packing Configuration Tool v3.0 — 批次模式",
                  font=('Microsoft JhengHei UI', 8), bg=C['white'], fg=C['text_muted']).pack(anchor='w')
         flow = tk.Frame(top, bg=C['white'])
         flow.pack(side='right')
-        for txt, ck in [("R file", 'blue'), ("->", ""), ("+CC", 'green'),
-                        ("->", ""), ("Preview", 'orange'), ("->", ""), ("Output", 'green')]:
-            if txt == "->":
-                tk.Label(flow, text="->", font=('Microsoft JhengHei UI', 8),
+        for txt, ck in [("Pallet info", 'blue'), ("→", ""), ("新增CC", 'green'),
+                        ("→", ""), ("預覽", 'orange'), ("→", ""), ("產出", 'green')]:
+            if txt == "→":
+                tk.Label(flow, text="→", font=('Microsoft JhengHei UI', 8),
                          bg=C['white'], fg=C['text_muted']).pack(side='left', padx=2)
             else:
                 self._pill(flow, txt, ck)
         tk.Frame(self.root, bg=C['border'], height=1).pack(fill='x')
 
+        # 捲動容器
         container = tk.Frame(self.root, bg=C['bg'])
         container.pack(fill='both', expand=True)
         self.canvas = tk.Canvas(container, bg=C['bg'], highlightthickness=0)
@@ -919,43 +1156,88 @@ class App:
         self.canvas.pack(side='left', fill='both', expand=True)
         vsb.pack(side='right', fill='y')
 
-        fc = self._section(self.main, "Step 0: Select R version file", 'blue')
-        frow = tk.Frame(fc, bg=C['white'])
-        frow.pack(fill='x', pady=2)
-        tk.Label(frow, text="R file", font=('Microsoft JhengHei UI', 9),
-                 bg=C['white'], fg=C['text_label']).pack(side='left')
-        self.r_file_var = tk.StringVar()
-        tk.Entry(frow, textvariable=self.r_file_var, width=50,
+        # ── Step 0: Pallet info 檔案選擇（PT + PF）──
+        fc = self._section(self.main, "Step 0：選擇 Pallet info 檔案", 'blue')
+
+        # PT Pallet info
+        pt_row = tk.Frame(fc, bg=C['white'])
+        pt_row.pack(fill='x', pady=2)
+        tk.Label(pt_row, text="PT Pallet info", font=('Microsoft JhengHei UI', 9, 'bold'),
+                 bg=C['white'], fg=C['text_label'], width=14, anchor='e').pack(side='left')
+        self.r_file_pt_var = tk.StringVar()
+        tk.Entry(pt_row, textvariable=self.r_file_pt_var, width=44,
                  font=('Consolas', 9), bg=C['input_bg'], fg=C['text'],
                  relief='solid', bd=1, highlightthickness=1,
                  highlightcolor=C['input_focus'],
                  highlightbackground=C['input_bd']).pack(side='left', padx=6)
-        tk.Button(frow, text="Browse", font=('Microsoft JhengHei UI', 9),
-                  bg=C['btn_blue'], fg=C['btn_fg'],
-                  activebackground=C['btn_hover'],
+        tk.Button(pt_row, text="瀏覽", font=('Microsoft JhengHei UI', 9),
+                  bg=C['btn_blue'], fg=C['btn_fg'], activebackground=C['btn_hover'],
                   relief='flat', padx=10, pady=2, cursor='hand2',
-                  command=self._browse_r).pack(side='left')
-        self.r_info_label = tk.Label(fc, text="", font=('Microsoft JhengHei UI', 9),
-                                     bg=C['white'], fg=C['text_dim'])
-        self.r_info_label.pack(anchor='w', pady=(4, 0))
+                  command=lambda: self._browse_r('AIO(PT)')).pack(side='left')
+        self.r_info_pt_label = tk.Label(fc, text="", font=('Microsoft JhengHei UI', 8),
+                                        bg=C['white'], fg=C['text_dim'])
+        self.r_info_pt_label.pack(anchor='w', padx=(0, 0))
 
-        ic = self._section(self.main, "Step 1: Add Carton Code", 'green')
-        self._group_label(ic, "Product / Model")
+        tk.Frame(fc, bg=C['grid'], height=1).pack(fill='x', pady=2)
+
+        # PF Pallet info
+        pf_row = tk.Frame(fc, bg=C['white'])
+        pf_row.pack(fill='x', pady=2)
+        tk.Label(pf_row, text="PF Pallet info", font=('Microsoft JhengHei UI', 9, 'bold'),
+                 bg=C['white'], fg=C['text_label'], width=14, anchor='e').pack(side='left')
+        self.r_file_pf_var = tk.StringVar()
+        tk.Entry(pf_row, textvariable=self.r_file_pf_var, width=44,
+                 font=('Consolas', 9), bg=C['input_bg'], fg=C['text'],
+                 relief='solid', bd=1, highlightthickness=1,
+                 highlightcolor=C['input_focus'],
+                 highlightbackground=C['input_bd']).pack(side='left', padx=6)
+        tk.Button(pf_row, text="瀏覽", font=('Microsoft JhengHei UI', 9),
+                  bg=C['btn_blue'], fg=C['btn_fg'], activebackground=C['btn_hover'],
+                  relief='flat', padx=10, pady=2, cursor='hand2',
+                  command=lambda: self._browse_r('PF')).pack(side='left')
+        self.r_info_pf_label = tk.Label(fc, text="", font=('Microsoft JhengHei UI', 8),
+                                        bg=C['white'], fg=C['text_dim'])
+        self.r_info_pf_label.pack(anchor='w')
+
+        # ── Step 1: 新增 CC ──
+        ic = self._section(self.main, "Step 1：新增 Carton Code", 'green')
+        self._group_label(ic, "產品 / 機種")
         self.cc_var = self._field_row(ic, "Carton Code", '', idx=0)
-        self.models_var = self._field_row(ic, "Models", '', idx=1)
-        self._group_label(ic, "Box specs (new CC only)")
-        self.height_var = self._field_row(ic, "Box Height (cm)", '', idx=0)
-        self.carton_l_var = self._field_row(ic, "Carton L (mm)", '', idx=1)
-        self.carton_w_var = self._field_row(ic, "Carton W (mm)", '', idx=0)
-        self.gw_var = self._field_row(ic, "G.W. (kg)", '', idx=1)
-        self.pcs_carton_var = self._field_row(ic, "Pcs/@Carton", '1', idx=0)
-        self._group_label(ic, "Pallet config (new CC only)")
-        self.bl_eu_var = self._field_row(ic, "Bottom Loading EU / EPAL-EU", '', idx=0)
-        self.bl_l7g_var = self._field_row(ic, "Bottom Loading L7-G / EPAL-STD", '', idx=1)
-        self._group_label(ic, "A file (new CC, for special pallet CSV)")
-        arow = tk.Frame(ic, bg=C['white'])
+        self.models_var = self._field_row(ic, "Models 機種名稱", '', idx=1)
+
+        # 檢查按鈕 + 狀態
+        chk_frame = tk.Frame(ic, bg=C['white'])
+        chk_frame.pack(fill='x', pady=(4, 2))
+        self.check_btn = tk.Button(
+            chk_frame, text="檢查 CC 新舊",
+            font=('Microsoft JhengHei UI', 9, 'bold'), bg=C['btn_orange'], fg=C['btn_fg'],
+            activebackground=C['btn_orange_h'], relief='flat', padx=14, pady=4,
+            cursor='hand2', command=self._check_cc)
+        self.check_btn.pack(side='left', padx=(0, 10))
+        self.cc_status_var = tk.StringVar(value="")
+        self.cc_status_label = tk.Label(chk_frame, textvariable=self.cc_status_var,
+            font=('Microsoft JhengHei UI', 9, 'bold'), bg=C['white'], fg=C['text_dim'])
+        self.cc_status_label.pack(side='left')
+
+        # ── 新 CC 專用欄位（預設隱藏）──
+        self.new_cc_frame = tk.Frame(ic, bg=C['white'])
+        # 不 pack — 預設隱藏，等 _check_cc 判斷後才顯示
+
+        self._group_label(self.new_cc_frame, "箱子規格（新 CC 專用）")
+        self.height_var = self._field_row(self.new_cc_frame, "箱高 (cm)", '', idx=0)
+        self.carton_l_var = self._field_row(self.new_cc_frame, "箱子尺寸 L (cm)", '', idx=1)
+        self.carton_w_var = self._field_row(self.new_cc_frame, "箱子尺寸 W (cm)", '', idx=0)
+        self.gw_var = self._field_row(self.new_cc_frame, "G.W. 毛重 (kg)", '', idx=1)
+        self.pcs_carton_var = self._field_row(self.new_cc_frame, "Pcs/@Carton 每箱件數", '1', idx=0)
+
+        self._group_label(self.new_cc_frame, "棧板配置")
+        self.bl_eu_var = self._field_row(self.new_cc_frame, "Bottom Loading EU / EPAL-EU", '', idx=0)
+        self.bl_l7g_var = self._field_row(self.new_cc_frame, "Bottom Loading L7-G / EPAL-STD", '', idx=1)
+
+        self._group_label(self.new_cc_frame, "Flora 特殊棧板檔案（產出特殊棧板 CSV）")
+        arow = tk.Frame(self.new_cc_frame, bg=C['white'])
         arow.pack(fill='x', pady=2)
-        tk.Label(arow, text="A file", font=('Microsoft JhengHei UI', 9),
+        tk.Label(arow, text="Flora 檔案", font=('Microsoft JhengHei UI', 9),
                  bg=C['white'], fg=C['text_label']).pack(side='left')
         self.a_file_var = tk.StringVar()
         tk.Entry(arow, textvariable=self.a_file_var, width=40,
@@ -963,103 +1245,188 @@ class App:
                  relief='solid', bd=1, highlightthickness=1,
                  highlightcolor=C['input_focus'],
                  highlightbackground=C['input_bd']).pack(side='left', padx=6)
-        tk.Button(arow, text="Browse", font=('Microsoft JhengHei UI', 9),
+        tk.Button(arow, text="瀏覽", font=('Microsoft JhengHei UI', 9),
                   bg=C['btn_blue'], fg=C['btn_fg'],
                   activebackground=C['btn_hover'],
                   relief='flat', padx=10, pady=2, cursor='hand2',
                   command=self._browse_a).pack(side='left')
-        self.a_product_var = self._field_row(ic, "A file product line", 'PF',
+        self.a_product_var = self._field_row(self.new_cc_frame, "Flora 檔案產品線", 'PF',
                                              PRODUCT_LINE_OPTIONS, idx=1)
+
+        # 加入清單按鈕
         bf = tk.Frame(ic, bg=C['white'])
         bf.pack(fill='x', pady=(8, 4))
         self.add_btn = tk.Button(
-            bf, text="+ Add to list",
+            bf, text="＋ 加入待處理清單",
             font=('Microsoft JhengHei UI', 10, 'bold'), bg=C['btn_green'], fg=C['btn_fg'],
             activebackground=C['btn_green_h'], relief='flat', padx=20, pady=6,
             cursor='hand2', command=self._add_to_list)
         self.add_btn.pack()
 
-        self.list_section = self._section(self.main, "Task list", 'orange')
+        # ── 待處理清單 ──
+        self.list_section = self._section(self.main, "待處理清單", 'orange')
         self.list_frame = tk.Frame(self.list_section, bg=C['white'])
         self.list_frame.pack(fill='x')
         self.list_empty_label = tk.Label(self.list_frame,
-            text="No items yet. Fill in above and click Add.",
+            text="尚未加入任何項目，請在上方填寫後按「加入待處理清單」",
             font=('Microsoft JhengHei UI', 9), bg=C['white'], fg=C['text_muted'], pady=10)
         self.list_empty_label.pack()
 
+        # ── 預覽區 (動態) ──
         self.preview_frame = tk.Frame(self.main, bg=C['bg'])
         self.preview_frame.pack(fill='x')
 
+        # ── 產出按鈕 ──
         bf2 = tk.Frame(self.main, bg=C['bg'])
         bf2.pack(pady=(6, 4))
         self.gen_btn = tk.Button(
-            bf2, text="Generate R+1 + CSV",
+            bf2, text="確認產出",
             font=('Microsoft JhengHei UI', 12, 'bold'), bg=C['btn_blue'], fg=C['btn_fg'],
             activebackground=C['btn_hover'], relief='flat', padx=28, pady=10,
             cursor='hand2', command=self._generate_all, state='disabled')
         self.gen_btn.pack()
 
-        rc = self._section(self.main, "Reference", 'orange')
-        self._ref_row(rc, [('Loading Type', 'Air:1  Sea:2  Land:4  Bulk:6')], 0)
-        self._ref_row(rc, [('Pallet H(cm)',
+        # ── 固定參數 ──
+        rc = self._section(self.main, "固定參數 Reference", 'orange')
+        self._ref_row(rc, [('運輸類型', '空運:1  海運:2  陸運:4  散貨:6')], 0)
+        self._ref_row(rc, [('棧板高(cm)',
                             'EU/L7-G:14.1  EPAL-EU:16.5  EPAL-STD:18.5')], 1)
-        self._ref_row(rc, [('Default limit', 'Air:150cm  Sea:220cm'),
-                           ('Formula', 'floor((limit-pallet_h)/box_h)')], 2)
-        self._ref_row(rc, [('Fixed', 'ASTPHQ -> EU Air+Sea'),
+        self._ref_row(rc, [('預設限高', '空運:150cm  海運:220cm'),
+                           ('公式', 'floor((限高−棧板高)÷箱高)')], 2)
+        self._ref_row(rc, [('固定加入', 'ASTPHQ → EU 空運+海運'),
                            ('EPAL-EU', 'MOQ = Bottom Layer')], 3)
 
+        # 狀態列
         sf = tk.Frame(self.root, bg=C['surface2'], height=28)
         sf.pack(fill='x', side='bottom')
-        self.status_var = tk.StringVar(value="Ready")
+        self.status_var = tk.StringVar(value="就緒")
         tk.Label(sf, textvariable=self.status_var, font=('Microsoft JhengHei UI', 8),
                  bg=C['surface2'], fg=C['text_dim'], padx=10).pack(side='left')
 
-    def _browse_r(self):
+    # ── 事件處理 ──
+
+    def _detect_cc_product_line(self, cc):
+        """從 CC 前綴判斷產品線: PT->AIO(PT), DT->PF"""
+        cc_upper = cc.upper()
+        if cc_upper.startswith('PT'):
+            return 'AIO(PT)'
+        elif cc_upper.startswith('DT'):
+            return 'PF'
+        return None
+
+    def _browse_r(self, product_line):
         fp = filedialog.askopenfilename(
-            title="Select R version Excel",
+            title=f"選擇 {product_line} Pallet info 檔案",
             filetypes=[("Excel", "*.xlsx")])
         if not fp:
             return
-        self.r_file_var.set(fp)
+        # 更新對應的路徑和標籤
+        if product_line == 'AIO(PT)':
+            file_var = self.r_file_pt_var
+            info_label = self.r_info_pt_label
+        else:
+            file_var = self.r_file_pf_var
+            info_label = self.r_info_pf_label
+        file_var.set(fp)
         try:
-            self.r_info = read_r_file(fp)
-            self.r_path = fp
-            pl = self.r_info['product_line']
-            rev = self.r_info['rev']
-            cc_count = len(self.r_info['cc_info'])
-            self.r_info_label.config(
-                text=f"Loaded: {pl}, Rev: {rev}, {cc_count} CCs",
+            r_info = read_r_file(fp, product_line)
+            self.r_info[product_line] = r_info
+            self.r_path[product_line] = fp
+            rev = r_info['rev']
+            cc_count = len(r_info['cc_info'])
+            info_label.config(
+                text=f"  已載入：Rev {rev}，{cc_count} 個 CC",
                 fg=C['green'])
-            self.status_var.set(f"Loaded R{rev} ({pl})")
+            self.status_var.set(f"已載入 {product_line} R{rev}")
         except Exception as e:
-            self.r_info = None
-            self.r_path = None
-            self.r_info_label.config(text=f"Load failed: {e}", fg=C['red'])
+            self.r_info.pop(product_line, None)
+            self.r_path.pop(product_line, None)
+            info_label.config(text=f"  載入失敗: {e}", fg=C['red'])
 
     def _browse_a(self):
         fp = filedialog.askopenfilename(
-            title="Select A file",
+            title="選擇 Flora 特殊棧板檔案",
             filetypes=[("Excel", "*.xlsx")])
         if fp:
             self.a_file_var.set(fp)
 
-    def _add_to_list(self):
-        if not self.r_info:
-            messagebox.showerror("Error", "Please select R version file first!")
+    def _check_cc(self):
+        """檢查 CC 是新的還是舊的，展開或隱藏對應欄位"""
+        cc = self.cc_var.get().strip()
+        if not cc:
+            messagebox.showerror("錯誤", "請先輸入 Carton Code！")
             return
+
+        # 從 CC 前綴判斷產品線
+        pl = self._detect_cc_product_line(cc)
+        if pl is None:
+            messagebox.showerror("錯誤",
+                f"無法從 CC「{cc}」判斷產品線！\n\n"
+                f"CC 應以 PT（AIO）或 DT（PF）開頭。")
+            return
+
+        # 檢查對應產品線的 Pallet info 是否已載入
+        if pl not in self.r_info:
+            pl_name = "PT" if pl == 'AIO(PT)' else "PF"
+            messagebox.showerror("錯誤",
+                f"請先載入 {pl_name} Pallet info 檔案！\n\n"
+                f"CC「{cc}」屬於 {pl} 產品線。")
+            return
+
+        # 檢查是否已在待處理清單
+        for t in self.task_list:
+            if t['cc'] == cc:
+                messagebox.showerror("錯誤", f"{cc} 已在待處理清單中！")
+                return
+
+        r_info = self.r_info[pl]
+        is_new = cc not in r_info['cc_info']
+        self._cc_is_new = is_new
+        self._cc_product_line = pl
+
+        if is_new:
+            self.new_cc_frame.pack(fill='x', before=self.add_btn.master)
+            self.a_product_var.set(pl)
+            self.cc_status_var.set(f"新 CC（{pl}）— 請填寫下方欄位")
+            self.cc_status_label.config(fg=C['orange'])
+            self.status_var.set(f"{cc} 是新 CC（{pl}），請填寫箱子規格")
+        else:
+            self.new_cc_frame.pack_forget()
+            existing = r_info['cc_info'][cc]
+            self.cc_status_var.set(
+                f"舊 CC（{pl}）— 現有機種: {existing['models']}")
+            self.cc_status_label.config(fg=C['blue'])
+            self.status_var.set(f"{cc} 是舊 CC（{pl}），只需輸入 Models")
+
+    def _add_to_list(self):
+        """驗證並加入待處理清單"""
         cc = self.cc_var.get().strip()
         models = self.models_var.get().strip()
         if not cc:
-            messagebox.showerror("Error", "Please enter Carton Code!")
+            messagebox.showerror("錯誤", "請輸入 Carton Code！")
             return
         if not models:
-            messagebox.showerror("Error", "Please enter Models!")
+            messagebox.showerror("錯誤", "請輸入 Models 機種名稱！")
+            return
+        if self._cc_is_new is None:
+            messagebox.showerror("錯誤", "請先按「檢查 CC 新舊」確認 CC 類型！")
+            return
+
+        pl = self._cc_product_line
+        if pl not in self.r_info:
+            messagebox.showerror("錯誤", f"請先載入 {pl} 的 Pallet info 檔案！")
+            return
+
+        r_info = self.r_info[pl]
+        current_is_new = cc not in r_info['cc_info']
+        if current_is_new != self._cc_is_new:
+            self._check_cc()
             return
         for t in self.task_list:
             if t['cc'] == cc:
-                messagebox.showerror("Error", f"{cc} already in list!")
+                messagebox.showerror("錯誤", f"{cc} 已在待處理清單中！")
                 return
-        is_new = cc not in self.r_info['cc_info']
+        is_new = self._cc_is_new
         if is_new:
             errs = []
             try:
@@ -1068,13 +1435,13 @@ class App:
             except (ValueError, TypeError):
                 errs.append("Box Height (cm)")
             try:
-                cl = int(self.carton_l_var.get().strip())
+                cl = float(self.carton_l_var.get().strip())
             except (ValueError, TypeError):
-                errs.append("Carton L (mm)")
+                errs.append("Carton L (cm)")
             try:
-                cw = int(self.carton_w_var.get().strip())
+                cw = float(self.carton_w_var.get().strip())
             except (ValueError, TypeError):
-                errs.append("Carton W (mm)")
+                errs.append("Carton W (cm)")
             try:
                 gw = float(self.gw_var.get().strip())
             except (ValueError, TypeError):
@@ -1092,33 +1459,60 @@ class App:
             except (ValueError, TypeError):
                 errs.append("Bottom Loading L7-G")
             if errs:
-                messagebox.showerror("Missing fields",
-                                     "The following fields are missing or invalid:\n\n" +
-                                     "\n".join(f"  - {e}" for e in errs))
+                messagebox.showerror("欄位不完整",
+                                     "以下欄位缺少或格式錯誤：\n\n" +
+                                     "\n".join(f"  • {e}" for e in errs))
                 return
             if b1 >= b2:
-                messagebox.showerror("Error",
-                    f"Bottom Loading error!\n\n"
-                    f"EU/EPAL-EU ({b1}) must be less than L7-G/EPAL-STD ({b2})")
+                messagebox.showerror("錯誤",
+                    f"Bottom Loading 設定錯誤！\n\n"
+                    f"EU/EPAL-EU ({b1}) 必須小於 L7-G/EPAL-STD ({b2})")
                 return
             if not self.a_file_var.get().strip():
-                messagebox.showerror("Error", "New CC requires A file for special pallet CSV!")
+                messagebox.showerror("錯誤", "新 CC 需要 Flora 特殊棧板檔案才能產出 CSV！")
                 return
+
+            a_file = self.a_file_var.get().strip()
+            a_pl = self.a_product_var.get()
+
+            # ── 執行預覽流程 ──
+            self.status_var.set(f"正在分析 {cc}...")
+            self.root.update_idletasks()
+
+            try:
+                rules, loc_data, anomalies = collect_layer_rules(a_file, a_pl, str(bh))
+            except Exception as e:
+                messagebox.showerror("分析失敗", f"Flora 檔案分析失敗：\n\n{e}")
+                return
+
+            # 開啟預覽對話框
+            dlg = PreviewDialog(self.root, cc, rules, loc_data, anomalies, bh, b1, b2)
+            self.root.wait_window(dlg.win)
+
+            if dlg.result is None:
+                self.status_var.set(f"{cc} 預覽已取消")
+                return
+
             task = {
                 'type': 'new', 'cc': cc, 'models': models,
+                'product_line': pl,
                 'box_height_cm': bh, 'box_height_mm': int(bh * 10),
-                'carton_l_mm': cl, 'carton_w_mm': cw,
+                'carton_l_mm': int(cl * 10), 'carton_w_mm': int(cw * 10),
                 'pcs_carton': pcs, 'pcs_layer_std': b2, 'pcs_layer_eu': b1,
                 'gw': gw, 'bl_eu': b1, 'bl_l7g': b2,
-                'a_file': self.a_file_var.get().strip(),
-                'a_product_line': self.a_product_var.get(),
+                'a_file': a_file,
+                'a_product_line': a_pl,
+                'preview_layer_lookup': dlg.result['layer_lookup'],
+                'preview_excluded_locs': dlg.result['excluded_locs'],
+                'preview_loc_data': loc_data,
             }
         else:
-            existing = self.r_info['cc_info'][cc]
+            existing = r_info['cc_info'][cc]
             box_h_mm = existing.get('box_height_mm')
             box_h_cm = box_h_mm / 10.0 if box_h_mm else 50.0
             task = {
                 'type': 'existing', 'cc': cc, 'models': models,
+                'product_line': pl,
                 'existing_models': existing['models'],
                 'box_height_cm': box_h_cm,
             }
@@ -1126,6 +1520,9 @@ class App:
         self._refresh_list()
         self.cc_var.set('')
         self.models_var.set('')
+        self._cc_is_new = None
+        self.cc_status_var.set("")
+        self.new_cc_frame.pack_forget()
         if is_new:
             self.height_var.set('')
             self.carton_l_var.set('')
@@ -1133,128 +1530,173 @@ class App:
             self.gw_var.set('')
             self.bl_eu_var.set('')
             self.bl_l7g_var.set('')
-        self.status_var.set(f"Added {cc} ({'new' if is_new else 'existing'}), {len(self.task_list)} total")
+        self.status_var.set(
+            f"已加入 {cc}（{'新' if is_new else '舊'} CC），待處理共 {len(self.task_list)} 筆")
 
     def _refresh_list(self):
         for w in self.list_frame.winfo_children():
             w.destroy()
         if not self.task_list:
-            self.list_empty_label = tk.Label(self.list_frame,
-                text="No items yet.",
-                font=('Microsoft JhengHei UI', 9), bg=C['white'], fg=C['text_muted'], pady=10)
-            self.list_empty_label.pack()
+            tk.Label(self.list_frame,
+                text="尚未加入任何項目",
+                font=('Microsoft JhengHei UI', 9), bg=C['white'], fg=C['text_muted'],
+                pady=10).pack()
             self.gen_btn.config(state='disabled', bg=C['border'])
             return
         hdr = tk.Frame(self.list_frame, bg=C['surface2'])
         hdr.pack(fill='x')
         tk.Frame(self.list_frame, bg=C['border'], height=2).pack(fill='x')
-        for txt, w in [("#", 3), ("CC", 10), ("Type", 6), ("Models", 25), ("Del", 6)]:
+        for txt, w in [("#", 3), ("CC", 10), ("產品線", 6), ("類型", 6), ("Models", 22), ("刪除", 5)]:
             tk.Label(hdr, text=txt, font=('Microsoft JhengHei UI', 8, 'bold'),
                      bg=C['surface2'], fg=C['text_muted'], width=w, pady=4,
                      anchor='w', padx=4).pack(side='left')
         for idx, task in enumerate(self.task_list):
             bg = C['white'] if idx % 2 == 0 else C['surface2']
             is_new = task['type'] == 'new'
+            pl = task.get('product_line', '')
+            pl_short = 'PT' if pl == 'AIO(PT)' else 'PF'
             row = tk.Frame(self.list_frame, bg=bg)
             row.pack(fill='x')
             tk.Label(row, text=str(idx + 1), font=('Consolas', 9),
                      bg=bg, fg=C['text_dim'], width=3, anchor='w', padx=4).pack(side='left')
             tk.Label(row, text=task['cc'], font=('Consolas', 10, 'bold'),
                      bg=bg, fg=C['text'], width=10, anchor='w').pack(side='left')
+            tk.Label(row, text=pl_short, font=('Consolas', 9),
+                     bg=bg, fg=C['text_dim'], width=6, anchor='w').pack(side='left')
             type_bg = C['orange_light'] if is_new else C['blue_light']
             type_fg = C['orange'] if is_new else C['blue']
-            type_text = "NEW" if is_new else "OLD"
-            tf = tk.Frame(row, bg=type_bg, padx=4, pady=1)
-            tf.pack(side='left', padx=4)
-            tk.Label(tf, text=type_text, font=('Microsoft JhengHei UI', 8, 'bold'),
+            type_text = "新" if is_new else "舊"
+            tframe = tk.Frame(row, bg=type_bg, padx=4, pady=1)
+            tframe.pack(side='left', padx=4)
+            tk.Label(tframe, text=type_text, font=('Microsoft JhengHei UI', 8, 'bold'),
                      bg=type_bg, fg=type_fg).pack()
             model_text = task['models']
             if not is_new:
                 model_text = f"{task['existing_models']} + {task['models']}"
             tk.Label(row, text=model_text, font=('Consolas', 9),
-                     bg=bg, fg=C['text'], width=25, anchor='w').pack(side='left')
+                     bg=bg, fg=C['text'], width=22, anchor='w').pack(side='left')
             def make_del(i):
                 return lambda: self._remove_task(i)
             tk.Button(row, text="X", font=('Microsoft JhengHei UI', 8),
                       bg=bg, fg=C['red'], relief='flat', cursor='hand2',
                       command=make_del(idx), padx=4).pack(side='left')
-        self.gen_btn.config(state='normal', bg=C['btn_blue'])
+
+        new_count = sum(1 for t in self.task_list if t['type'] == 'new')
+        old_count = sum(1 for t in self.task_list if t['type'] == 'existing')
+        parts = []
+        if new_count:
+            parts.append(f"{new_count} 個新 CC")
+        if old_count:
+            parts.append(f"{old_count} 個舊 CC")
+        btn_text = f"確認產出（{' + '.join(parts)}）"
+        self.gen_btn.config(state='normal', bg=C['btn_blue'], text=btn_text)
 
     def _remove_task(self, idx):
         if 0 <= idx < len(self.task_list):
             removed = self.task_list.pop(idx)
             self._refresh_list()
-            self.status_var.set(f"Removed {removed['cc']}")
+            self.status_var.set(f"已移除 {removed['cc']}")
 
     def _generate_all(self):
-        if not self.task_list or not self.r_path:
+        if not self.task_list:
             return
         if self._running:
             return
         self._running = True
         self.gen_btn.config(state='disabled', bg=C['border'])
-        self.status_var.set("Generating...")
+        self.status_var.set("產出中...")
 
         tasks_snapshot = list(self.task_list)
-        r_path_snapshot = self.r_path
+        r_path_snapshot = dict(self.r_path)
 
         def work():
             try:
                 results = []
-                out_r, new_rev = generate_r_version(r_path_snapshot, tasks_snapshot)
-                results.append(f"R{new_rev} -> {os.path.basename(out_r)}")
-                new_cc_count = 0
+
+                # 按產品線分組
+                tasks_by_pl = {}
+                for task in tasks_snapshot:
+                    pl = task.get('product_line', 'AIO(PT)')
+                    tasks_by_pl.setdefault(pl, []).append(task)
+
+                # 各產品線分別生成新版 Pallet info
+                new_r_paths = {}
+                for pl, pl_tasks in tasks_by_pl.items():
+                    r_path = r_path_snapshot.get(pl)
+                    if not r_path:
+                        results.append(f"{pl} — Pallet info 未載入，跳過")
+                        continue
+                    try:
+                        out_r, new_rev = generate_r_version(
+                            r_path, pl_tasks, product_line=pl)
+                        pl_short = 'PT' if pl == 'AIO(PT)' else 'PF'
+                        results.append(f"{pl_short} R{new_rev} → {os.path.basename(out_r)}")
+                        new_r_paths[pl] = (out_r, new_rev)
+                    except Exception as e:
+                        results.append(f"{pl} Pallet info 更新失敗: {e}")
+
+                # 新 CC 產出特殊棧板 CSV
                 for task in tasks_snapshot:
                     if task['type'] != 'new':
                         continue
-                    new_cc_count += 1
-                    a_file = task.get('a_file', '')
-                    if not a_file:
-                        results.append(f"{task['cc']} - A file not specified, skipped CSV")
-                        continue
-                    a_pl = task.get('a_product_line', 'PF')
-                    bh = str(task['box_height_cm'])
-                    bl1 = task['bl_eu']
-                    bl2 = task['bl_l7g']
                     cc = task['cc']
+                    bh = str(task['box_height_cm'])
+                    bl1, bl2 = task['bl_eu'], task['bl_l7g']
+
+                    layer_lookup = task.get('preview_layer_lookup', {})
+                    excluded_locs = task.get('preview_excluded_locs', set())
+                    loc_data = task.get('preview_loc_data')
+
+                    if not loc_data:
+                        results.append(f"{cc} — 缺少預覽資料，跳過 CSV")
+                        continue
+
                     try:
-                        rules, loc_data, anomalies = collect_layer_rules(a_file, a_pl, bh)
-                        lookup = {
-                            (r['pallet_code'], r['loading_type'], r['limitation']): r['calc_layer']
-                            for r in rules}
-                        csv_path, csv_cnt = generate_csv(cc, bh, bl1, bl2, loc_data, lookup)
-                        results.append(f"{cc} CSV -> {os.path.basename(csv_path)} ({csv_cnt} rows)")
+                        csv_path, csv_cnt = generate_csv(
+                            cc, bh, bl1, bl2, loc_data, layer_lookup, excluded_locs)
+                        results.append(
+                            f"{cc} CSV → {os.path.basename(csv_path)}（{csv_cnt} 筆）")
                     except Exception as e:
-                        results.append(f"{cc} CSV failed: {e}")
-                msg = "Done!\n\n" + "\n".join(results) + "\n\nFiles saved to Desktop"
-                self.root.after(0, lambda: messagebox.showinfo("Done", msg))
+                        results.append(f"{cc} CSV 失敗: {e}")
+
+                msg = "產出完成！\n\n" + "\n".join(results) + "\n\n檔案已儲存到桌面"
+                self.root.after(0, lambda: messagebox.showinfo("產出完成", msg))
+
+                new_cc_count = sum(1 for t in tasks_snapshot if t['type'] == 'new')
+                old_cc_count = sum(1 for t in tasks_snapshot if t['type'] == 'existing')
                 self.root.after(0, lambda: self.status_var.set(
-                    f"Done - R{new_rev} + {new_cc_count} CSVs"))
+                    f"完成 — {new_cc_count} 個新 CC + {old_cc_count} 個舊 CC"))
 
                 def _post_generate():
                     self.task_list.clear()
                     self._refresh_list()
-                    self.r_path = out_r
-                    self.r_file_var.set(out_r)
-                    try:
-                        self.r_info = read_r_file(out_r)
-                        pl = self.r_info['product_line']
-                        self.r_info_label.config(
-                            text=f"Loaded: {pl}, Rev: {new_rev}, {len(self.r_info['cc_info'])} CCs",
-                            fg=C['green'])
-                    except Exception:
-                        pass
+                    for pl, (out_r, new_rev) in new_r_paths.items():
+                        self.r_path[pl] = out_r
+                        if pl == 'AIO(PT)':
+                            self.r_file_pt_var.set(out_r)
+                        else:
+                            self.r_file_pf_var.set(out_r)
+                        try:
+                            self.r_info[pl] = read_r_file(out_r, pl)
+                            cc_count = len(self.r_info[pl]['cc_info'])
+                            label = self.r_info_pt_label if pl == 'AIO(PT)' else self.r_info_pf_label
+                            label.config(
+                                text=f"  已載入：Rev {new_rev}，{cc_count} 個 CC",
+                                fg=C['green'])
+                        except Exception:
+                            pass
                     self._running = False
                     self.gen_btn.config(
                         state='normal' if self.task_list else 'disabled',
                         bg=C['btn_blue'] if self.task_list else C['border'])
 
                 self.root.after(0, _post_generate)
+
             except Exception as e:
                 tb = traceback.format_exc()
                 def _on_error():
-                    messagebox.showerror("Failed", f"{e}\n\n{tb}")
-                    self.status_var.set("Failed")
+                    messagebox.showerror("產出失敗", f"{e}\n\n{tb}")
+                    self.status_var.set("產出失敗")
                     self._running = False
                     self.gen_btn.config(
                         state='normal' if self.task_list else 'disabled',
@@ -1266,15 +1708,18 @@ class App:
 
 def main():
     root = tk.Tk()
+
     import tkinter.font as tkfont
     default_font = tkfont.nametofont("TkDefaultFont")
     default_font.configure(family='Microsoft JhengHei UI', size=9)
     root.option_add("*Font", default_font)
+
     style = ttk.Style()
     for theme in ['clam', 'vista', 'winnative']:
         if theme in style.theme_names():
             style.theme_use(theme)
             break
+
     App(root)
     root.mainloop()
 
