@@ -1,0 +1,175 @@
+"""Entry point: launch GUI, or run a headless CLI optimisation that can
+also write a PDF + Excel report.
+
+Examples
+--------
+    python -m pallet_stacking.main                       # launch GUI
+
+    python -m pallet_stacking.main --cli \\
+        --case-l 400 --case-w 300 --case-h 250 --case-weight 8 \\
+        --pallet-l 1200 --pallet-w 1000 --max-height 1800 \\
+        --margin-front 10 --margin-back 10 --margin-left 10 --margin-right 10 \\
+        --pdf out.pdf --excel out.xlsx
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from typing import Optional
+
+from .        import PALLET_PRESETS, SHIPPING_PRESETS
+from .core    import optimize, compare_solutions, verify_layer
+from .models  import Carton, Pallet
+from .export  import export_pdf, export_excel
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="pallet_stacking",
+                                description="Pallet stacking optimizer")
+    p.add_argument("--cli",   action="store_true",
+                   help="Run headless (no GUI).")
+    p.add_argument("--web",   action="store_true",
+                   help="Launch the Streamlit web UI (Anthropic-styled).")
+    p.add_argument("--pdf",   type=str, default=None,
+                   help="Write a PDF report to this path.")
+    p.add_argument("--excel", type=str, default=None,
+                   help="Write an Excel summary to this path.")
+
+    # carton
+    p.add_argument("--case-l", type=float, help="Case length (mm)")
+    p.add_argument("--case-w", type=float, help="Case width  (mm)")
+    p.add_argument("--case-h", type=float, help="Case height (mm)")
+    p.add_argument("--case-weight", type=float, default=0.0)
+    p.add_argument("--case-name", type=str, default="Case")
+    p.add_argument("--barcode-face", choices=["L", "W", "H"], default="L",
+                   help="Which case axis the barcode face is normal to "
+                        "(default L = side face).")
+
+    # pallet
+    p.add_argument("--pallet-preset", choices=list(PALLET_PRESETS.keys()),
+                   default=None,
+                   help="Override --pallet-l / --pallet-w with a preset pallet.")
+    p.add_argument("--shipping", choices=list(SHIPPING_PRESETS.keys()),
+                   default=None,
+                   help="Override --max-height with the limit for a "
+                        "shipping mode (Ocean = 2200 mm, Air = 1500 mm).")
+    p.add_argument("--pallet-l", type=float, default=1200)
+    p.add_argument("--pallet-w", type=float, default=1000)
+    p.add_argument("--pallet-h", type=float, default=150)
+    p.add_argument("--pallet-weight", type=float, default=0.0)
+    p.add_argument("--max-height",    type=float, default=2200)
+    p.add_argument("--margin-front",  type=float, default=0)
+    p.add_argument("--margin-back",   type=float, default=0)
+    p.add_argument("--margin-left",   type=float, default=0)
+    p.add_argument("--margin-right",  type=float, default=0)
+    p.add_argument("--carton-gap",    type=float, default=0,
+                   help="Inter-carton gap in mm (used both within layer and "
+                        "between layers).")
+
+    # algorithm
+    p.add_argument("--top-n",          type=int,   default=5)
+    p.add_argument("--interlock",      action="store_true",
+                   help="Enable layer-to-layer 90 degrees interlock "
+                        "(disabled by default; each layer is identical).")
+    p.add_argument("--barcode-weight", type=float, default=100.0)
+    p.add_argument("--area-weight",    type=float, default=10.0)
+    p.add_argument("--cases-weight",   type=float, default=1000.0)
+
+    # verification
+    p.add_argument("--verify", action="store_true",
+                   help="After solving, ask CP-SAT to prove the per-layer "
+                        "count is the global optimum (no other arrangement "
+                        "fits more cartons).")
+    p.add_argument("--verify-time", type=float, default=120.0,
+                   help="Time budget (s) for the verifier. Default 120.")
+    return p
+
+
+def run_cli(args) -> int:
+    missing = [n for n in ("case_l", "case_w", "case_h")
+               if getattr(args, n) is None]
+    if missing:
+        print(f"Missing required CLI args: {missing}", file=sys.stderr)
+        return 2
+
+    pl, pw, mh = args.pallet_l, args.pallet_w, args.max_height
+    if args.pallet_preset:
+        dims = PALLET_PRESETS.get(args.pallet_preset)
+        if dims:
+            pl, pw = dims
+    if args.shipping:
+        v = SHIPPING_PRESETS.get(args.shipping)
+        if v:
+            mh = v
+
+    carton = Carton(length=args.case_l, width=args.case_w, height=args.case_h,
+                    weight=args.case_weight, name=args.case_name,
+                    barcode_face_axis=args.barcode_face)
+    pallet = Pallet(length=pl, width=pw,
+                    height=args.pallet_h, max_total_height=mh,
+                    margin_front=args.margin_front,
+                    margin_back=args.margin_back,
+                    margin_left=args.margin_left,
+                    margin_right=args.margin_right,
+                    carton_gap=args.carton_gap,
+                    weight=args.pallet_weight)
+
+    sols = optimize(carton, pallet,
+                    top_n=args.top_n,
+                    allow_interlock=args.interlock,
+                    cases_weight=args.cases_weight,
+                    barcode_weight=args.barcode_weight,
+                    area_weight=args.area_weight)
+    if not sols:
+        print("No valid stacking solution found.", file=sys.stderr)
+        return 2
+
+    rows = compare_solutions(sols)
+    print(json.dumps(rows, indent=2))
+
+    primary = sols[0]
+    if args.verify:
+        print(f"\nVerifying per-layer optimality "
+              f"(time budget {args.verify_time:.0f}s) …")
+        vr = verify_layer(primary, pallet, time_limit=args.verify_time)
+        verdict = ("OPTIMAL" if vr.optimal is True else
+                   "SUB-OPTIMAL" if vr.optimal is False else "UNKNOWN")
+        print(f"  optimizer    : {vr.optimizer_count} cartons/layer")
+        print(f"  exact        : "
+              f"{vr.exact_count if vr.exact_count is not None else '—'} "
+              f"cartons/layer")
+        print(f"  area upper   : {vr.area_upper_bound}")
+        print(f"  status       : {vr.status}  ({vr.wall_s:.1f}s)")
+        print(f"  verdict      : {verdict}")
+
+    if args.pdf:
+        export_pdf(args.pdf, primary, top_solutions=sols,
+                   product_name=carton.name, product_code=carton.name,
+                   pallet_type="Standard", pallet_weight=args.pallet_weight,
+                   load_ref=primary.layout_name)
+        print(f"PDF written to {args.pdf}")
+    if args.excel:
+        export_excel(args.excel, primary, top_solutions=sols,
+                     product_name=carton.name, product_code=carton.name,
+                     pallet_type="Standard", pallet_weight=args.pallet_weight)
+        print(f"Excel written to {args.excel}")
+    return 0
+
+
+def main(argv: Optional[list] = None) -> int:
+    args = _build_parser().parse_args(argv)
+    if args.cli:
+        return run_cli(args)
+    if args.web:
+        import subprocess
+        app = os.path.join(os.path.dirname(__file__), "web", "app.py")
+        return subprocess.call(["streamlit", "run", app])
+    from .gui import run
+    run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
